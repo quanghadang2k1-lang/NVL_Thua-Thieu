@@ -117,7 +117,6 @@ def process_boms(rdbom_files, manbom_files):
 
 def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv):
     dfs = []
-    
     # 1. kho_tot
     df_tot = load_excel_header_search(f_tot, "Nhập xuất tồn", ["mã vật tư", "mô tả"])
     if df_tot is not None and not df_tot.empty:
@@ -128,7 +127,6 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv):
             df_tot = df_tot[target_cols].copy()
             df_tot.columns = ['VNPT Man P/N', 'Tồn kho tốt'] + list(df_tot.columns[2:])
             dfs.append(df_tot[['VNPT Man P/N', 'Tồn kho tốt']])
-            
     # 2. kho_clc
     df_clc = load_excel_header_search(f_clc, "Chi tiết tốt", ["mã vật tư", "mô tả"])
     if df_clc is not None and not df_clc.empty:
@@ -138,7 +136,6 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv):
             df_clc = df_clc[target_cols].copy()
             df_clc.columns = ['VNPT Man P/N', 'Tồn kho clc']
             dfs.append(df_clc)
-
     # 3. nha_may_tech
     df_tech = load_excel_header_search(f_tech, "TECH TỔNG", ["row labels", "tên vật tư"])
     if df_tech is not None and not df_tech.empty:
@@ -147,7 +144,6 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv):
             df_tech = df_tech[target_cols].copy()
             df_tech.columns = ['VNPT Man P/N', 'Tồn NM tech']
             dfs.append(df_tech)
-
     # 4. nha_may_scbh
     df_scbh = load_excel_header_search(f_scbh, "SCBH", ["row labels", "mã vật tư"])
     if df_scbh is not None and not df_scbh.empty:
@@ -158,7 +154,6 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv):
             df_scbh = df_scbh[target_cols].copy()
             df_scbh.columns = ['VNPT Man P/N', 'Tồn NM scbh']
             dfs.append(df_scbh)
-
     # 5. khhv
     df_khhv = load_excel_header_search(f_khhv, "TH", ["vnpt pn", "description"])
     if df_khhv is not None and not df_khhv.empty:
@@ -170,21 +165,126 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv):
             df_khhv = df_khhv[target_cols].copy()
             df_khhv.columns = ['VNPT Man P/N', 'Tồn KHHV']
             dfs.append(df_khhv)
-            
+
     if dfs:
         for i in range(len(dfs)):
             dfs[i]['VNPT Man P/N'] = dfs[i]['VNPT Man P/N'].astype(str).str.strip()
             dfs[i] = dfs[i][~dfs[i]['VNPT Man P/N'].str.lower().isin(['', 'nan', '(blank)', 'none', 'null'])]
-
         merged_inventory = reduce(lambda left, right: pd.merge(left, right, on='VNPT Man P/N', how='outer'), dfs)
         stock_cols = [col for col in merged_inventory.columns if col != 'VNPT Man P/N']
         for col in stock_cols:
             merged_inventory[col] = pd.to_numeric(merged_inventory[col], errors='coerce').fillna(0)
-
         sum_cols = [col for col in stock_cols if col != 'Tồn kho clc']
         merged_inventory['Tổng tồn'] = merged_inventory[sum_cols].sum(axis=1)
         return merged_inventory
     return None
+
+def allocate_inventory(pivot_df, product_cols):
+    def get_usages(lg_str):
+        if pd.isna(lg_str): return set()
+        return set([part.strip() for part in str(lg_str).split('|')])
+
+    parent = {}
+    def find(i):
+        if parent[i] == i: return i
+        parent[i] = find(parent[i])
+        return parent[i]
+
+    def union(i, j):
+        root_i = find(i)
+        root_j = find(j)
+        if root_i != root_j: parent[root_i] = root_j
+
+    for idx in pivot_df.index: parent[idx] = idx
+
+    usage_to_indices = {}
+    for idx, row in pivot_df.iterrows():
+        usages = get_usages(row['Level Group'])
+        for u in usages:
+            if u not in usage_to_indices: usage_to_indices[u] = []
+            usage_to_indices[u].append(idx)
+
+    for indices in usage_to_indices.values():
+        for i in range(1, len(indices)): union(indices[0], indices[i])
+
+    pool_dict = {}
+    for idx in pivot_df.index:
+        root = find(idx)
+        if root not in pool_dict: pool_dict[root] = []
+        pool_dict[root].append(idx)
+
+    results = []
+    pool_number = 1
+    for root, indices in pool_dict.items():
+        group_df = pivot_df.loc[indices].copy()
+        group_df['Popularity'] = pd.to_numeric(group_df['Popularity'], errors='coerce')
+        stock_col = 'Tổng tồn' if 'Tổng tồn' in group_df.columns else 'TONG_TON' if 'TONG_TON' in group_df.columns else None
+        if not stock_col:
+            group_df['Tổng tồn'] = 0
+            stock_col = 'Tổng tồn'
+        group_df[stock_col] = pd.to_numeric(group_df[stock_col], errors='coerce').fillna(0)
+        group_df = group_df.sort_values(by=['Popularity', stock_col], ascending=[True, True])
+
+        group_df['Allocation Pool'] = pool_number
+        pool_number += 1
+
+        for col in product_cols:
+            if col in group_df.columns: group_df.rename(columns={col: f"{col} - Standard Qty"}, inplace=True)
+            old_calc = f"{col} - Calculated"
+            if old_calc in group_df.columns: group_df.rename(columns={old_calc: f"{col} - SL theo KH"}, inplace=True)
+
+        group_remain = {}
+        main_idx = group_df.index[0]
+
+        for col in product_cols:
+            calc_col = f"{col} - SL theo KH"
+            group_remain[col] = group_df[calc_col].max() if calc_col in group_df.columns else 0.0
+            group_df[f"{col} - SL sau phân bổ kho"] = 0.0
+
+        for idx, row in group_df.iterrows():
+            stock = row.get(stock_col, 0)
+            level_group_str = str(row.get('Level Group', ''))
+            for col in product_cols:
+                if col in level_group_str:
+                    if group_remain[col] > 0 and stock > 0:
+                        use_qty = min(group_remain[col], stock)
+                        group_df.at[idx, f"{col} - SL sau phân bổ kho"] = use_qty
+                        group_remain[col] -= use_qty
+                        stock -= use_qty
+            group_df.at[idx, 'Remaining_Stock'] = stock
+
+        for col in product_cols:
+            if group_remain[col] > 0:
+                valid_indices = [i for i, r in group_df.iterrows() if col in str(r.get('Level Group', ''))]
+                target_idx = valid_indices[0] if valid_indices else main_idx
+                group_df.at[target_idx, f"{col} - SL sau phân bổ kho"] += group_remain[col]
+                group_df.at[target_idx, 'Remaining_Stock'] -= group_remain[col]
+                group_remain[col] = 0.0
+
+        results.append(group_df)
+
+    allocated_df = pd.concat(results, ignore_index=True)
+    all_cols = list(allocated_df.columns)
+    fixed_start_cols = [c for c in ['Level Group', 'Allocation Pool', 'Filter VNPT MAN P/N', 'Description', 'Popularity'] if c in all_cols]
+    
+    prod_cols_ordered = []
+    for p_col in product_cols:
+        for suffix in [" - Standard Qty", " - SL theo KH", " - SL sau phân bổ kho"]:
+            if f"{p_col}{suffix}" in all_cols: prod_cols_ordered.append(f"{p_col}{suffix}")
+
+    allocated_df['Tổng KHSX'] = allocated_df[[c for c in all_cols if 'SL sau phân bổ kho' in c]].sum(axis=1)
+    if 'Tồn kho clc' in allocated_df.columns:
+        allocated_df['Tồn Active'] = allocated_df['Remaining_Stock'] - pd.to_numeric(allocated_df['Tồn kho clc'], errors='coerce').fillna(0)
+
+    end_cols = [c for c in ['Tổng KHSX', 'Tồn kho tốt', 'Tồn kho clc', 'Tồn NM tech', 'Tồn NM scbh', 'Tồn KHHV', 'Tổng tồn', 'Remaining_Stock', 'Tồn Active'] if c in allocated_df.columns]
+    
+    final_ordered_cols = fixed_start_cols + prod_cols_ordered + end_cols
+    final_ordered_cols = [c for c in final_ordered_cols if c in allocated_df.columns]
+    allocated_df = allocated_df[final_ordered_cols]
+    
+    allocated_df['Allocation Pool'] = allocated_df['Allocation Pool'].astype(str)
+    allocated_df.loc[allocated_df['Allocation Pool'].duplicated(), 'Allocation Pool'] = ''
+    return allocated_df
 
 # --- UI Workflow ---
 with st.expander("1. Upload BOM Files & Process", expanded=True):
@@ -197,36 +297,24 @@ with st.expander("1. Upload BOM Files & Process", expanded=True):
                 st.session_state.processed_df, st.session_state.pivot = processed, pivot
                 st.success("BOMs processed successfully!")
 
-                st.subheader("Final BOM Result Table")
-                st.dataframe(st.session_state.processed_df)
-
-                st.subheader("Pivot Table")
-                st.dataframe(st.session_state.pivot)
-
 with st.expander("2. Production Plan & Calculate Demand", expanded=True):
     if st.session_state.pivot is not None:
-        st.markdown("### Enter Production Quantity (KHSX) for each product")
         pivot_df = st.session_state.pivot.copy()
-
         index_cols = ["Level Group", "Filter VNPT MAN P/N", "Description", "Popularity"]
         rdbom_cols = [col for col in pivot_df.columns if col not in index_cols]
-
+        st.session_state.product_cols = rdbom_cols
         cols = st.columns(3)
         multipliers = {}
-
         for i, col in enumerate(rdbom_cols):
             with cols[i % 3]:
                 multipliers[col] = st.number_input(f"Multiplier for {col}", min_value=0.0, value=1.0, step=1.0)
-
         if st.button("Calculate Demand"):
             for col in rdbom_cols:
                 pivot_df[f"{col} - Calculated"] = pivot_df[col] * multipliers[col]
-
             st.session_state.pivot_calculated = pivot_df
-            st.success("Component quantities calculated successfully!")
-            st.dataframe(st.session_state.pivot_calculated)
+            st.success("Demand calculated successfully!")
     else:
-        st.info("Please complete Step 1 to generate the pivot table first.")
+        st.info("Please complete Step 1.")
 
 with st.expander("3. Upload Inventory Files", expanded=True):
     if st.session_state.pivot_calculated is not None:
@@ -238,31 +326,39 @@ with st.expander("3. Upload Inventory Files", expanded=True):
         with col2:
             f_scbh = st.file_uploader("Upload 'Nhà máy SCBH'", type=["xlsx", "xls"])
             f_khhv = st.file_uploader("Upload 'KHHV'", type=["xlsx", "xls"])
-            
         if st.button("Process Inventory"):
             with st.spinner("Processing Inventory..."):
                 merged_inv = process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv)
                 if merged_inv is not None:
                     st.session_state.merged_inventory = merged_inv
-                    
-                    # Merge into Pivot
                     pivot_final = st.session_state.pivot_calculated.copy()
                     cols_to_merge = [c for c in ['VNPT Man P/N', 'Tồn kho tốt', 'Tồn kho clc', 'Tồn NM tech', 'Tồn NM scbh', 'Tồn KHHV', 'Tổng tồn'] if c in merged_inv.columns]
-                    
-                    pivot_final = pd.merge(
-                        pivot_final,
-                        merged_inv[cols_to_merge],
-                        left_on='Filter VNPT MAN P/N',
-                        right_on='VNPT Man P/N',
-                        how='left'
-                    )
-                    if 'VNPT Man P/N' in pivot_final.columns:
-                        pivot_final = pivot_final.drop(columns=['VNPT Man P/N'])
-                        
+                    pivot_final = pd.merge(pivot_final, merged_inv[cols_to_merge], left_on='Filter VNPT MAN P/N', right_on='VNPT Man P/N', how='left')
+                    if 'VNPT Man P/N' in pivot_final.columns: pivot_final = pivot_final.drop(columns=['VNPT Man P/N'])
                     st.session_state.pivot_calculated = pivot_final
-                    st.success("Inventory processed and joined successfully!")
-                    st.dataframe(st.session_state.pivot_calculated)
+                    st.success("Inventory joined successfully!")
                 else:
-                    st.warning("Could not extract inventory data. Please check the uploaded files.")
+                    st.warning("Could not extract inventory.")
     else:
-        st.info("Please calculate demand in Step 2 before uploading inventory.")
+        st.info("Please calculate demand in Step 2.")
+
+with st.expander("4. Product Priority & Stock Allocation", expanded=True):
+    if st.session_state.pivot_calculated is not None and 'Tổng tồn' in st.session_state.pivot_calculated.columns:
+        st.markdown("### Set Product Priority (Lower number = Higher Priority)")
+        cols = st.columns(3)
+        priorities = {}
+        for i, col in enumerate(st.session_state.product_cols):
+            with cols[i % 3]:
+                priorities[col] = st.number_input(f"Priority for {col}", min_value=1, value=i+1, step=1)
+        
+        if st.button("Allocate Stock"):
+            with st.spinner("Allocating components..."):
+                st.session_state.product_priorities = priorities
+                sorted_products = sorted(st.session_state.product_cols, key=lambda x: priorities.get(x, 999))
+                
+                allocated = allocate_inventory(st.session_state.pivot_calculated, sorted_products)
+                st.session_state.allocated_df = allocated
+                st.success("Stock allocation completed!")
+                st.dataframe(st.session_state.allocated_df)
+    else:
+        st.info("Please upload inventory and ensure 'Tổng tồn' is calculated in Step 3.")
