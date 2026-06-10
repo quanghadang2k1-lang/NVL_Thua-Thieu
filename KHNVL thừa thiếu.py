@@ -28,11 +28,14 @@ def load_excel_header_search(uploaded_file, sheet_keyword, keywords, is_bom=Fals
     if uploaded_file is None: return None
     content_io = io.BytesIO(uploaded_file.getvalue())
     try:
-        xls = pd.ExcelFile(content_io, engine='openpyxl' if not uploaded_file.name.lower().endswith('.xls') else 'xlrd')
+        # Determine the engine to use based on file extension
+        engine_to_use = 'openpyxl' if not uploaded_file.name.lower().endswith('.xls') else 'xlrd'
+
+        xls = pd.ExcelFile(content_io, engine=engine_to_use)
         sheet_name = next((sn for sn in xls.sheet_names if str(sheet_keyword).lower() in str(sn).lower()), None) if sheet_keyword else xls.sheet_names[0]
         if sheet_name is None: return None
 
-        temp_df = pd.read_excel(content_io, sheet_name=sheet_name, header=None)
+        temp_df = pd.read_excel(content_io, sheet_name=sheet_name, header=None, engine=engine_to_use)
         header_idx = 0
         for i, row in temp_df.iterrows():
             row_vals = [str(val).strip().lower() for val in row.values]
@@ -41,7 +44,7 @@ def load_excel_header_search(uploaded_file, sheet_keyword, keywords, is_bom=Fals
                 break
 
         content_io.seek(0)
-        df = pd.read_excel(content_io, sheet_name=sheet_name, header=header_idx)
+        df = pd.read_excel(content_io, sheet_name=sheet_name, header=header_idx, engine=engine_to_use)
         if is_bom:
             if bom_type == 'RDBOM': df['Source_RDBOM'] = uploaded_file.name; df['Level'] = df['Level'].astype(str); df = df.ffill()
             if bom_type == 'MANBOM': df['Source_MANBOM'] = uploaded_file.name
