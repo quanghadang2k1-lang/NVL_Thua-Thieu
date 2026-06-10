@@ -27,14 +27,30 @@ init_state('product_priorities', {})
 def load_excel_header_search(uploaded_file, sheet_keyword, keywords, is_bom=False, bom_type='RDBOM'):
     if uploaded_file is None: return None
     content_io = io.BytesIO(uploaded_file.getvalue())
-    try:
-        # Determine the engine to use based on file extension
-        engine_to_use = 'openpyxl' if not uploaded_file.name.lower().endswith('.xls') else 'xlrd'
+    file_extension = uploaded_file.name.lower().split('.')[-1]
+    engine_to_use = 'openpyxl' # Default to openpyxl
 
+    if file_extension == 'xls':
+        try:
+            # Try to import xlrd. If successful, use it.
+            import xlrd # Attempt import
+            if xlrd.__version__ >= '2.0.1': # Check version for .xls support
+                engine_to_use = 'xlrd'
+            else:
+                st.warning(f"xlrd version {xlrd.__version__} is installed, but version >= 2.0.1 is recommended for .xls files. Using openpyxl as a fallback for '{uploaded_file.name}'.")
+        except ImportError:
+            st.warning(f"xlrd library not found or failed to import. Attempting to open '{uploaded_file.name}' with openpyxl (may have limited support for older .xls formats).")
+        except Exception as e:
+            st.warning(f"An unexpected error occurred while checking xlrd for '{uploaded_file.name}': {e}. Attempting to open with openpyxl.")
+
+    try:
         xls = pd.ExcelFile(content_io, engine=engine_to_use)
         sheet_name = next((sn for sn in xls.sheet_names if str(sheet_keyword).lower() in str(sn).lower()), None) if sheet_keyword else xls.sheet_names[0]
-        if sheet_name is None: return None
+        if sheet_name is None:
+            st.error(f"No sheet matching '{sheet_keyword}' found in '{uploaded_file.name}'.")
+            return None
 
+        content_io.seek(0) # Reset stream for read_excel
         temp_df = pd.read_excel(content_io, sheet_name=sheet_name, header=None, engine=engine_to_use)
         header_idx = 0
         for i, row in temp_df.iterrows():
@@ -50,7 +66,7 @@ def load_excel_header_search(uploaded_file, sheet_keyword, keywords, is_bom=Fals
             if bom_type == 'MANBOM': df['Source_MANBOM'] = uploaded_file.name
         return df
     except Exception as e:
-        st.error(f"Error loading {uploaded_file.name}: {str(e)}")
+        st.error(f"Error loading {uploaded_file.name} with engine '{engine_to_use}': {str(e)}")
         return None
 
 # --- Step 1: BOM Upload & Merge ---
