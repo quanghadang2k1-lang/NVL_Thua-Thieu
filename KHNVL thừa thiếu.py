@@ -106,6 +106,11 @@ def process_boms(rdbom_files, manbom_files):
     processed = processed[processed['Filter VNPT MAN P/N'] != ""].drop(columns=['Pop_Num'])
 
     if 'Description' not in processed.columns: processed['Description'] = ''
+    
+    desired_cols = ['Source_RDBOM', 'Source_MANBOM', 'VNPT P/N', 'Level', 'Description', 'VNPT MAN P/N', 'Quantity/Product', 'consumption rate', 'Standard quantity', 'Filter VNPT MAN P/N', 'Popularity', 'Level Group']
+    final_cols = [col for col in desired_cols if col in processed.columns]
+    processed = processed[final_cols]
+    
     pivot = pd.pivot_table(processed, index=["Level Group", "Filter VNPT MAN P/N", "Description", "Popularity"], columns=["Source_RDBOM"], values="Standard quantity", aggfunc="sum", fill_value=0).reset_index()
     return processed, pivot.sort_values(by="Level Group").reset_index(drop=True)
 
@@ -130,21 +135,21 @@ with st.expander("2. Production Plan & Calculate Demand", expanded=True):
     if st.session_state.pivot is not None:
         st.markdown("### Enter Production Quantity (KHSX) for each product")
         pivot_df = st.session_state.pivot.copy()
-        
+
         index_cols = ["Level Group", "Filter VNPT MAN P/N", "Description", "Popularity"]
         rdbom_cols = [col for col in pivot_df.columns if col not in index_cols]
-        
+
         cols = st.columns(3)
         multipliers = {}
-        
+
         for i, col in enumerate(rdbom_cols):
             with cols[i % 3]:
                 multipliers[col] = st.number_input(f"Multiplier for {col}", min_value=0.0, value=1.0, step=1.0)
-                
+
         if st.button("Calculate Demand"):
             for col in rdbom_cols:
                 pivot_df[f"{col} - Calculated"] = pivot_df[col] * multipliers[col]
-            
+
             st.session_state.pivot_calculated = pivot_df
             st.success("Component quantities calculated successfully!")
             st.dataframe(st.session_state.pivot_calculated)
