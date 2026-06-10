@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 import re
+from functools import reduce
 
 # --- Streamlit App Configuration ---
 st.set_page_config(layout="wide", page_title="BOM Allocation Tool")
@@ -32,16 +33,15 @@ def load_excel_header_search(uploaded_file, sheet_keyword, keywords, is_bom=Fals
 
     if file_extension == 'xls':
         try:
-            # Try to import xlrd. If successful, use it.
-            import xlrd # Attempt import
-            if xlrd.__version__ >= '2.0.1': # Check version for .xls support
+            import xlrd
+            if xlrd.__version__ >= '2.0.1':
                 engine_to_use = 'xlrd'
             else:
-                st.warning(f"xlrd version {xlrd.__version__} is installed, but version >= 2.0.1 is recommended for .xls files. Using openpyxl as a fallback for '{uploaded_file.name}'.")
+                st.warning(f"xlrd version {xlrd.__version__} is installed, but version >= 2.0.1 is recommended for .xls files. Using openpyxl as a fallback.")
         except ImportError:
-            st.warning(f"xlrd library not found or failed to import. Attempting to open '{uploaded_file.name}' with openpyxl (may have limited support for older .xls formats).")
+            st.warning(f"xlrd library not found or failed to import. Attempting to open with openpyxl.")
         except Exception as e:
-            st.warning(f"An unexpected error occurred while checking xlrd for '{uploaded_file.name}': {e}. Attempting to open with openpyxl.")
+            st.warning(f"An unexpected error occurred while checking xlrd: {e}. Attempting to open with openpyxl.")
 
     kwargs = {'engine': engine_to_use}
     if engine_to_use == 'xlrd':
@@ -54,7 +54,7 @@ def load_excel_header_search(uploaded_file, sheet_keyword, keywords, is_bom=Fals
             st.error(f"No sheet matching '{sheet_keyword}' found in '{uploaded_file.name}'.")
             return None
 
-        content_io.seek(0) # Reset stream for read_excel
+        content_io.seek(0)
         temp_df = pd.read_excel(content_io, sheet_name=sheet_name, header=None, **kwargs)
         header_idx = 0
         for i, row in temp_df.iterrows():
@@ -138,14 +138,102 @@ with st.expander("1. Upload BOM Files & Process", expanded=True):
                 st.success("BOMs processed successfully!")
 
 # --- Step 2: Inventory Upload ---
-with st.expander("2. Upload Inventory Data"):
-    stock_file = st.file_uploader("Upload Consolidated Inventory File (Stocks .xlsx)", type=["xlsx", "xls"])
-    if st.button("Process Inventory") and stock_file and st.session_state.pivot is not None:
-        stocks = pd.read_excel(stock_file)
-        if 'Level Group' in stocks.columns: stocks = stocks.drop(columns=['Level Group'])
-        if 'Filter VNPT MAN P/N' in stocks.columns:
-            st.session_state.pivot = pd.merge(st.session_state.pivot, stocks, on='Filter VNPT MAN P/N', how='left')
-            st.success("Inventory merged!")
+with st.expander("2. Upload Inventory Data (5 Individual Files)"):
+    col1, col2 = st.columns(2)
+    with col1:
+        f_kho_tot = st.file_uploader("1. Kho Tốt (Nhập xuất tồn)", type=["xlsx", "xls"])
+        f_kho_clc = st.file_uploader("2. Kho CLC (Chi tiết tốt)", type=["xlsx", "xls"])
+        f_tech = st.file_uploader("3. Nhà Máy Tech (TECH TỔNG)", type=["xlsx", "xls"])
+    with col2:
+        f_scbh = st.file_uploader("4. Nhà Máy SCBH (SCBH)", type=["xlsx", "xls"])
+        f_khhv = st.file_uploader("5. KHHV (TH)", type=["xlsx", "xls"])
+
+    if st.button("Process Inventory") and st.session_state.pivot is not None:
+        with st.spinner("Processing inventory files..."):
+            inventory_dfs = []
+
+            def process_inv(f, sheet_kw, kw_list):
+                if not f: return None
+                return load_excel_header_search(f, sheet_kw, kw_list)
+
+            df_tot = process_inv(f_kho_tot, "Nhập xuất tồn", ["mã vật tư", "mô tả"])
+            if df_tot is not None and not df_tot.empty:
+                if str(df_tot.iloc[0].values[0]).strip().startswith('('):
+                    df_tot = df_tot.iloc[1:].reset_index(drop=True)
+                cuoi_ky_cols = [c for c in df_tot.columns if 'cuối kỳ' in str(c).lower()]
+                t_cols = [c for c in df_tot.columns if str(c).lower() == 'mã vật tư'] + cuoi_ky_cols
+                if set(t_cols).issubset(df_tot.columns):
+                    df_tot = df_tot[t_cols]
+                    df_tot.columns = ['VNPT Man P/N', 'Tồn kho tốt']
+                    inventory_dfs.append(df_tot)
+
+            df_clc = process_inv(f_kho_clc, "Chi tiết tốt", ["mã vật tư", "mô tả"])
+            if df_clc is not None and not df_clc.empty:
+                if str(df_clc.iloc[0].values[0]).strip().startswith('('):
+                    df_clc = df_clc.iloc[1:].reset_index(drop=True)
+                t_cols = [c for c in df_clc.columns if str(c).lower() in ['mã vật tư', 'tồn cuối kỳ']]
+                if set(t_cols).issubset(df_clc.columns):
+                    df_clc = df_clc[t_cols]
+                    df_clc.columns = ['VNPT Man P/N', 'Tồn kho clc']
+                    inventory_dfs.append(df_clc)
+
+            df_tech = process_inv(f_tech, "TECH TỔNG", ["row labels", "tên vật tư"])
+            if df_tech is not None and not df_tech.empty:
+                t_cols = [c for c in df_tech.columns if str(c).lower() in ['row labels', 'tồn cuối']]
+                if set(t_cols).issubset(df_tech.columns):
+                    df_tech = df_tech[t_cols]
+                    df_tech.columns = ['VNPT Man P/N', 'Tồn NM tech']
+                    inventory_dfs.append(df_tech)
+
+            df_scbh = process_inv(f_scbh, "SCBH", ["row labels", "mã vật tư"])
+            if df_scbh is not None and not df_scbh.empty:
+                t_cols = [c for c in df_scbh.columns if str(c).lower() in ['mã vật tư', 'tồn cuối']]
+                if 'Row Labels' in df_scbh.columns and not any(str(c).lower() == 'mã vật tư' for c in t_cols):
+                    t_cols.insert(0, 'Row Labels')
+                if set(t_cols).issubset(df_scbh.columns):
+                    df_scbh = df_scbh[t_cols]
+                    df_scbh.columns = ['VNPT Man P/N', 'Tồn NM scbh']
+                    inventory_dfs.append(df_scbh)
+
+            df_khhv = process_inv(f_khhv, "TH", ["vnpt pn", "description"])
+            if df_khhv is not None and not df_khhv.empty:
+                tong_cols = [c for c in df_khhv.columns if 'tổng' in str(c).lower()]
+                last_tong = [tong_cols[-1]] if tong_cols else []
+                b_cols = [c for c in df_khhv.columns if str(c).lower() in ['vnpt p/n', 'vnpt pn']]
+                t_cols = b_cols + last_tong
+                if set(t_cols).issubset(df_khhv.columns):
+                    df_khhv = df_khhv[t_cols]
+                    df_khhv.columns = ['VNPT Man P/N', 'Tồn KHHV']
+                    inventory_dfs.append(df_khhv)
+
+            if inventory_dfs:
+                cleaned_dfs = []
+                for d in inventory_dfs:
+                    d['VNPT Man P/N'] = d['VNPT Man P/N'].astype(str).str.strip()
+                    d = d[~d['VNPT Man P/N'].str.lower().isin(['', 'nan', '(blank)', 'none', 'null'])]
+                    cleaned_dfs.append(d)
+
+                merged_inv = reduce(lambda left, right: pd.merge(left, right, on='VNPT Man P/N', how='outer'), cleaned_dfs)
+                s_cols = [c for c in merged_inv.columns if c != 'VNPT Man P/N']
+                for c in s_cols:
+                    merged_inv[c] = pd.to_numeric(merged_inv[c], errors='coerce').fillna(0)
+
+                sum_cols = [c for c in s_cols if c != 'Tồn kho clc']
+                merged_inv['Tổng tồn'] = merged_inv[sum_cols].sum(axis=1)
+
+                # Identify and drop all existing stock related columns from 'pivot' before merging
+                stock_cols_to_remove = ['Tổng tồn', 'TONG_TON', 'Tồn kho tốt', 'Tồn kho clc', 'Tồn NM tech', 'Tồn NM scbh', 'Tồn KHHV']
+                cols_to_remove = [col for col in st.session_state.pivot.columns if any(sc in col for sc in stock_cols_to_remove)]
+                if cols_to_remove:
+                    st.session_state.pivot = st.session_state.pivot.drop(columns=cols_to_remove)
+
+                st.session_state.pivot = pd.merge(st.session_state.pivot, merged_inv, left_on='Filter VNPT MAN P/N', right_on='VNPT Man P/N', how='left')
+                if 'VNPT Man P/N' in st.session_state.pivot.columns:
+                    st.session_state.pivot = st.session_state.pivot.drop(columns=['VNPT Man P/N'])
+
+                st.success("Inventory processed and merged successfully!")
+            else:
+                st.warning("No valid inventory data was extracted. Please ensure the files match the required format.")
 
 # --- Step 3: Allocation ---
 with st.expander("3. Allocation & Download"):
