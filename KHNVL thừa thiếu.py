@@ -43,15 +43,19 @@ def load_excel_header_search(uploaded_file, sheet_keyword, keywords, is_bom=Fals
         except Exception as e:
             st.warning(f"An unexpected error occurred while checking xlrd for '{uploaded_file.name}': {e}. Attempting to open with openpyxl.")
 
+    kwargs = {'engine': engine_to_use}
+    if engine_to_use == 'xlrd':
+        kwargs['engine_kwargs'] = {'ignore_workbook_corruption': True}
+
     try:
-        xls = pd.ExcelFile(content_io, engine=engine_to_use)
+        xls = pd.ExcelFile(content_io, **kwargs)
         sheet_name = next((sn for sn in xls.sheet_names if str(sheet_keyword).lower() in str(sn).lower()), None) if sheet_keyword else xls.sheet_names[0]
         if sheet_name is None:
             st.error(f"No sheet matching '{sheet_keyword}' found in '{uploaded_file.name}'.")
             return None
 
         content_io.seek(0) # Reset stream for read_excel
-        temp_df = pd.read_excel(content_io, sheet_name=sheet_name, header=None, engine=engine_to_use)
+        temp_df = pd.read_excel(content_io, sheet_name=sheet_name, header=None, **kwargs)
         header_idx = 0
         for i, row in temp_df.iterrows():
             row_vals = [str(val).strip().lower() for val in row.values]
@@ -60,7 +64,7 @@ def load_excel_header_search(uploaded_file, sheet_keyword, keywords, is_bom=Fals
                 break
 
         content_io.seek(0)
-        df = pd.read_excel(content_io, sheet_name=sheet_name, header=header_idx, engine=engine_to_use)
+        df = pd.read_excel(content_io, sheet_name=sheet_name, header=header_idx, **kwargs)
         if is_bom:
             if bom_type == 'RDBOM': df['Source_RDBOM'] = uploaded_file.name; df['Level'] = df['Level'].astype(str); df = df.ffill()
             if bom_type == 'MANBOM': df['Source_MANBOM'] = uploaded_file.name
@@ -119,6 +123,14 @@ with st.expander("1. Upload BOM Files & Process", expanded=True):
                 processed.loc[mask, 'Level Group'] = processed.loc[idx_max[mask], 'Level Group'].values
                 processed = processed[processed['Filter VNPT MAN P/N'] != ""].drop(columns=['Pop_Num'])
                 st.session_state.processed_df = processed
+
+                # Ensure required pivot columns exist
+                if 'Description' not in processed.columns:
+                    processed['Description'] = ''
+                if 'Source_RDBOM' not in processed.columns:
+                    processed['Source_RDBOM'] = 'Unknown'
+                if 'Standard quantity' not in processed.columns:
+                    processed['Standard quantity'] = 0
 
                 # Pivot
                 pivot = pd.pivot_table(processed, index=["Level Group", "Filter VNPT MAN P/N", "Description", "Popularity"], columns=["Source_RDBOM"], values="Standard quantity", aggfunc="sum", fill_value=0).reset_index()
