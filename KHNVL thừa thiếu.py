@@ -264,9 +264,86 @@ def allocate_inventory(pivot_df, product_cols):
         results.append(group_df)
 
     allocated_df = pd.concat(results, ignore_index=True)
+    
+    # --- Flaw Resolution Logic ---
+    def resolve_pool_flaws(df_pool):
+        max_iters = 20
+        for _ in range(max_iters):
+            neg_mask = df_pool['Remaining_Stock'] < -0.0001
+            if not neg_mask.any():
+                break
+            fixed_something = False
+            for deficit_idx in df_pool[neg_mask].index:
+                deficit_val = -df_pool.loc[deficit_idx, 'Remaining_Stock']
+                for p_col in product_cols:
+                    alloc_col = f"{p_col} - SL sau phân bổ kho"
+                    if alloc_col in df_pool.columns and df_pool.loc[deficit_idx, alloc_col] > 0:
+                        valid_for_A = [idx for idx, row in df_pool.iterrows() if p_col in str(row.get('Level Group', ''))]
+                        for shared_idx in valid_for_A:
+                            if shared_idx == deficit_idx: continue
+                            for p_col_B in product_cols:
+                                if p_col_B == p_col: continue
+                                alloc_col_B = f"{p_col_B} - SL sau phân bổ kho"
+                                if alloc_col_B in df_pool.columns:
+                                    b_taken = df_pool.loc[shared_idx, alloc_col_B]
+                                    if b_taken > 0:
+                                        valid_for_B = [idx for idx, row in df_pool.iterrows() if p_col_B in str(row.get('Level Group', ''))]
+                                        for spare_idx in valid_for_B:
+                                            if spare_idx == shared_idx or spare_idx == deficit_idx: continue
+                                            spare_stock = df_pool.loc[spare_idx, 'Remaining_Stock']
+                                            if spare_stock > 0:
+                                                shift_amount = min(deficit_val, b_taken, spare_stock)
+                                                if shift_amount > 0:
+                                                    df_pool.loc[shared_idx, alloc_col_B] -= shift_amount
+                                                    df_pool.loc[spare_idx, alloc_col_B] += shift_amount
+                                                    df_pool.loc[spare_idx, 'Remaining_Stock'] -= shift_amount
+
+                                                    df_pool.loc[deficit_idx, alloc_col] -= shift_amount
+                                                    df_pool.loc[shared_idx, alloc_col] += shift_amount
+                                                    df_pool.loc[deficit_idx, 'Remaining_Stock'] += shift_amount
+
+                                                    deficit_val -= shift_amount
+                                                    fixed_something = True
+                                                    if deficit_val < 0.0001: break
+                                        if deficit_val < 0.0001: break
+                            if deficit_val < 0.0001: break
+            if not fixed_something:
+                break 
+
+        neg_mask_final = df_pool['Remaining_Stock'] < -0.0001
+        if neg_mask_final.any():
+            for deficit_idx in df_pool[neg_mask_final].index:
+                for p_col in product_cols:
+                    alloc_col = f"{p_col} - SL sau phân bổ kho"
+                    if alloc_col in df_pool.columns and df_pool.loc[deficit_idx, alloc_col] > 0:
+                        deficit_val = -df_pool.loc[deficit_idx, 'Remaining_Stock']
+                        if deficit_val <= 0.0001: continue
+                        valid_for_A = [idx for idx, row in df_pool.iterrows() if p_col in str(row.get('Level Group', ''))]
+                        if valid_for_A:
+                            highest_pop_idx = max(valid_for_A, key=lambda i: pd.to_numeric(df_pool.loc[i, 'Popularity'], errors='coerce') if pd.notna(df_pool.loc[i, 'Popularity']) else 0)
+                            if highest_pop_idx != deficit_idx:
+                                shift_amount = min(deficit_val, df_pool.loc[deficit_idx, alloc_col])
+                                if shift_amount > 0:
+                                    df_pool.loc[deficit_idx, alloc_col] -= shift_amount
+                                    df_pool.loc[highest_pop_idx, alloc_col] += shift_amount
+                                    df_pool.loc[deficit_idx, 'Remaining_Stock'] += shift_amount
+                                    df_pool.loc[highest_pop_idx, 'Remaining_Stock'] -= shift_amount
+        return df_pool
+
+    pool_temp = allocated_df['Allocation Pool'].replace('', pd.NA).ffill()
+    fixed_dfs = []
+    for pool_id, group in allocated_df.groupby(pool_temp):
+        if (group['Remaining_Stock'] < -0.0001).any():
+            fixed_group = resolve_pool_flaws(group.copy())
+            fixed_dfs.append(fixed_group)
+        else:
+            fixed_dfs.append(group)
+    allocated_df = pd.concat(fixed_dfs).sort_index()
+    # --- End of Flaw Resolution Logic ---
+
     all_cols = list(allocated_df.columns)
     fixed_start_cols = [c for c in ['Level Group', 'Allocation Pool', 'Filter VNPT MAN P/N', 'Description', 'Popularity'] if c in all_cols]
-    
+
     prod_cols_ordered = []
     for p_col in product_cols:
         for suffix in [" - Standard Qty", " - SL theo KH", " - SL sau phân bổ kho"]:
@@ -277,11 +354,11 @@ def allocate_inventory(pivot_df, product_cols):
         allocated_df['Tồn Active'] = allocated_df['Remaining_Stock'] - pd.to_numeric(allocated_df['Tồn kho clc'], errors='coerce').fillna(0)
 
     end_cols = [c for c in ['Tổng KHSX', 'Tồn kho tốt', 'Tồn kho clc', 'Tồn NM tech', 'Tồn NM scbh', 'Tồn KHHV', 'Tổng tồn', 'Remaining_Stock', 'Tồn Active'] if c in allocated_df.columns]
-    
+
     final_ordered_cols = fixed_start_cols + prod_cols_ordered + end_cols
     final_ordered_cols = [c for c in final_ordered_cols if c in allocated_df.columns]
     allocated_df = allocated_df[final_ordered_cols]
-    
+
     allocated_df['Allocation Pool'] = allocated_df['Allocation Pool'].astype(str)
     allocated_df.loc[allocated_df['Allocation Pool'].duplicated(), 'Allocation Pool'] = ''
     return allocated_df
@@ -350,12 +427,12 @@ with st.expander("4. Product Priority & Stock Allocation", expanded=True):
         for i, col in enumerate(st.session_state.product_cols):
             with cols[i % 3]:
                 priorities[col] = st.number_input(f"Priority for {col}", min_value=1, value=i+1, step=1)
-        
+
         if st.button("Allocate Stock"):
             with st.spinner("Allocating components..."):
                 st.session_state.product_priorities = priorities
                 sorted_products = sorted(st.session_state.product_cols, key=lambda x: priorities.get(x, 999))
-                
+
                 allocated = allocate_inventory(st.session_state.pivot_calculated, sorted_products)
                 st.session_state.allocated_df = allocated
                 st.success("Stock allocation completed!")
