@@ -17,6 +17,7 @@ def init_state(key, default):
 init_state('processed_df', None)
 init_state('pivot', None)
 init_state('pivot_calculated', None)
+init_state('merged_inventory', None)
 init_state('allocated_df', None)
 init_state('product_cols', [])
 init_state('product_priorities', {})
@@ -114,6 +115,77 @@ def process_boms(rdbom_files, manbom_files):
     pivot = pd.pivot_table(processed, index=["Level Group", "Filter VNPT MAN P/N", "Description", "Popularity"], columns=["Source_RDBOM"], values="Standard quantity", aggfunc="sum", fill_value=0).reset_index()
     return processed, pivot.sort_values(by="Level Group").reset_index(drop=True)
 
+def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv):
+    dfs = []
+    
+    # 1. kho_tot
+    df_tot = load_excel_header_search(f_tot, "Nhập xuất tồn", ["mã vật tư", "mô tả"])
+    if df_tot is not None and not df_tot.empty:
+        if str(df_tot.iloc[0].values[0]).strip().startswith('('): df_tot = df_tot.iloc[1:].reset_index(drop=True)
+        cuoi_ky_cols = [col for col in df_tot.columns if 'cuối kỳ' in str(col).lower()]
+        target_cols = [col for col in df_tot.columns if str(col).lower() in ['mã vật tư']] + cuoi_ky_cols
+        if len(target_cols) >= 2:
+            df_tot = df_tot[target_cols].copy()
+            df_tot.columns = ['VNPT Man P/N', 'Tồn kho tốt'] + list(df_tot.columns[2:])
+            dfs.append(df_tot[['VNPT Man P/N', 'Tồn kho tốt']])
+            
+    # 2. kho_clc
+    df_clc = load_excel_header_search(f_clc, "Chi tiết tốt", ["mã vật tư", "mô tả"])
+    if df_clc is not None and not df_clc.empty:
+        if str(df_clc.iloc[0].values[0]).strip().startswith('('): df_clc = df_clc.iloc[1:].reset_index(drop=True)
+        target_cols = [col for col in df_clc.columns if str(col).lower() in ['mã vật tư', 'tồn cuối kỳ']]
+        if len(target_cols) >= 2:
+            df_clc = df_clc[target_cols].copy()
+            df_clc.columns = ['VNPT Man P/N', 'Tồn kho clc']
+            dfs.append(df_clc)
+
+    # 3. nha_may_tech
+    df_tech = load_excel_header_search(f_tech, "TECH TỔNG", ["row labels", "tên vật tư"])
+    if df_tech is not None and not df_tech.empty:
+        target_cols = [col for col in df_tech.columns if str(col).lower() in ['row labels', 'tồn cuối']]
+        if len(target_cols) >= 2:
+            df_tech = df_tech[target_cols].copy()
+            df_tech.columns = ['VNPT Man P/N', 'Tồn NM tech']
+            dfs.append(df_tech)
+
+    # 4. nha_may_scbh
+    df_scbh = load_excel_header_search(f_scbh, "SCBH", ["row labels", "mã vật tư"])
+    if df_scbh is not None and not df_scbh.empty:
+        target_cols = [col for col in df_scbh.columns if str(col).lower() in ['mã vật tư', 'tồn cuối']]
+        if 'Row Labels' in df_scbh.columns and not any(str(c).lower() == 'mã vật tư' for c in target_cols):
+            target_cols.insert(0, 'Row Labels')
+        if len(target_cols) >= 2:
+            df_scbh = df_scbh[target_cols].copy()
+            df_scbh.columns = ['VNPT Man P/N', 'Tồn NM scbh']
+            dfs.append(df_scbh)
+
+    # 5. khhv
+    df_khhv = load_excel_header_search(f_khhv, "TH", ["vnpt pn", "description"])
+    if df_khhv is not None and not df_khhv.empty:
+        tong_cols = [col for col in df_khhv.columns if 'tổng' in str(col).lower()]
+        last_tong = [tong_cols[-1]] if tong_cols else []
+        base_cols = [col for col in df_khhv.columns if str(col).lower() in ['vnpt p/n', 'vnpt pn']]
+        target_cols = base_cols + last_tong
+        if len(target_cols) >= 2:
+            df_khhv = df_khhv[target_cols].copy()
+            df_khhv.columns = ['VNPT Man P/N', 'Tồn KHHV']
+            dfs.append(df_khhv)
+            
+    if dfs:
+        for i in range(len(dfs)):
+            dfs[i]['VNPT Man P/N'] = dfs[i]['VNPT Man P/N'].astype(str).str.strip()
+            dfs[i] = dfs[i][~dfs[i]['VNPT Man P/N'].str.lower().isin(['', 'nan', '(blank)', 'none', 'null'])]
+
+        merged_inventory = reduce(lambda left, right: pd.merge(left, right, on='VNPT Man P/N', how='outer'), dfs)
+        stock_cols = [col for col in merged_inventory.columns if col != 'VNPT Man P/N']
+        for col in stock_cols:
+            merged_inventory[col] = pd.to_numeric(merged_inventory[col], errors='coerce').fillna(0)
+
+        sum_cols = [col for col in stock_cols if col != 'Tồn kho clc']
+        merged_inventory['Tổng tồn'] = merged_inventory[sum_cols].sum(axis=1)
+        return merged_inventory
+    return None
+
 # --- UI Workflow ---
 with st.expander("1. Upload BOM Files & Process", expanded=True):
     rdbom_files = st.file_uploader("Upload RDBOM.xlsx (Required)", type=["xlsx", "xls"], accept_multiple_files=True)
@@ -155,3 +227,42 @@ with st.expander("2. Production Plan & Calculate Demand", expanded=True):
             st.dataframe(st.session_state.pivot_calculated)
     else:
         st.info("Please complete Step 1 to generate the pivot table first.")
+
+with st.expander("3. Upload Inventory Files", expanded=True):
+    if st.session_state.pivot_calculated is not None:
+        col1, col2 = st.columns(2)
+        with col1:
+            f_tot = st.file_uploader("Upload 'Kho Tốt'", type=["xlsx", "xls"])
+            f_clc = st.file_uploader("Upload 'Kho CLC'", type=["xlsx", "xls"])
+            f_tech = st.file_uploader("Upload 'Nhà máy Tech'", type=["xlsx", "xls"])
+        with col2:
+            f_scbh = st.file_uploader("Upload 'Nhà máy SCBH'", type=["xlsx", "xls"])
+            f_khhv = st.file_uploader("Upload 'KHHV'", type=["xlsx", "xls"])
+            
+        if st.button("Process Inventory"):
+            with st.spinner("Processing Inventory..."):
+                merged_inv = process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv)
+                if merged_inv is not None:
+                    st.session_state.merged_inventory = merged_inv
+                    
+                    # Merge into Pivot
+                    pivot_final = st.session_state.pivot_calculated.copy()
+                    cols_to_merge = [c for c in ['VNPT Man P/N', 'Tồn kho tốt', 'Tồn kho clc', 'Tồn NM tech', 'Tồn NM scbh', 'Tồn KHHV', 'Tổng tồn'] if c in merged_inv.columns]
+                    
+                    pivot_final = pd.merge(
+                        pivot_final,
+                        merged_inv[cols_to_merge],
+                        left_on='Filter VNPT MAN P/N',
+                        right_on='VNPT Man P/N',
+                        how='left'
+                    )
+                    if 'VNPT Man P/N' in pivot_final.columns:
+                        pivot_final = pivot_final.drop(columns=['VNPT Man P/N'])
+                        
+                    st.session_state.pivot_calculated = pivot_final
+                    st.success("Inventory processed and joined successfully!")
+                    st.dataframe(st.session_state.pivot_calculated)
+                else:
+                    st.warning("Could not extract inventory data. Please check the uploaded files.")
+    else:
+        st.info("Please calculate demand in Step 2 before uploading inventory.")
