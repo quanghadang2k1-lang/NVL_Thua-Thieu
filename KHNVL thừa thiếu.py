@@ -76,7 +76,7 @@ def process_boms(rdbom_files, manbom_files):
         manbom = manbom_df.copy()
         manbom['Base_Project'] = manbom['Source_MANBOM'].str.replace(r'\s*\(\d+\)', '', regex=True).str.replace(r'_ManBom', '', regex=True, flags=re.IGNORECASE).str.replace(r'\.xls[x]?$', '', regex=True, flags=re.IGNORECASE)
         manbom = manbom.drop_duplicates(subset=['VNPT P/N', 'Base_Project'])
-        merged = pd.merge(rdbom, manbom, on=['VNPT P/N', 'Base_Project'], how='left')
+        merged = pd.merge(rdbom, manbom, on=['VNPT P/N', 'Base_Project'], how='left', suffixes=('', '_MANBOM'))
     else:
         merged = rdbom
 
@@ -106,11 +106,11 @@ def process_boms(rdbom_files, manbom_files):
     processed = processed[processed['Filter VNPT MAN P/N'] != ""].drop(columns=['Pop_Num'])
 
     if 'Description' not in processed.columns: processed['Description'] = ''
-    
+
     desired_cols = ['Source_RDBOM', 'Source_MANBOM', 'VNPT P/N', 'Level', 'Description', 'VNPT MAN P/N', 'Quantity/Product', 'consumption rate', 'Standard quantity', 'Filter VNPT MAN P/N', 'Popularity', 'Level Group']
     final_cols = [col for col in desired_cols if col in processed.columns]
     processed = processed[final_cols]
-    
+
     pivot = pd.pivot_table(processed, index=["Level Group", "Filter VNPT MAN P/N", "Description", "Popularity"], columns=["Source_RDBOM"], values="Standard quantity", aggfunc="sum", fill_value=0).reset_index()
     return processed, pivot.sort_values(by="Level Group").reset_index(drop=True)
 
