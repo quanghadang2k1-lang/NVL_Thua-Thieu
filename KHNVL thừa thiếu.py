@@ -264,7 +264,7 @@ def allocate_inventory(pivot_df, product_cols):
         results.append(group_df)
 
     allocated_df = pd.concat(results, ignore_index=True)
-    
+
     # --- Flaw Resolution Logic ---
     def resolve_pool_flaws(df_pool):
         max_iters = 20
@@ -308,7 +308,7 @@ def allocate_inventory(pivot_df, product_cols):
                                         if deficit_val < 0.0001: break
                             if deficit_val < 0.0001: break
             if not fixed_something:
-                break 
+                break
 
         neg_mask_final = df_pool['Remaining_Stock'] < -0.0001
         if neg_mask_final.any():
@@ -373,6 +373,10 @@ with st.expander("1. Upload BOM Files & Process", expanded=True):
             if pivot is not None:
                 st.session_state.processed_df, st.session_state.pivot = processed, pivot
                 st.success("BOMs processed successfully!")
+                st.markdown("### Final BOM Results")
+                st.dataframe(st.session_state.processed_df)
+                st.markdown("### Pivot Table")
+                st.dataframe(st.session_state.pivot)
 
 with st.expander("2. Production Plan & Calculate Demand", expanded=True):
     if st.session_state.pivot is not None:
@@ -390,6 +394,8 @@ with st.expander("2. Production Plan & Calculate Demand", expanded=True):
                 pivot_df[f"{col} - Calculated"] = pivot_df[col] * multipliers[col]
             st.session_state.pivot_calculated = pivot_df
             st.success("Demand calculated successfully!")
+            st.markdown("### Pivot with Demand")
+            st.dataframe(st.session_state.pivot_calculated)
     else:
         st.info("Please complete Step 1.")
 
@@ -414,6 +420,10 @@ with st.expander("3. Upload Inventory Files", expanded=True):
                     if 'VNPT Man P/N' in pivot_final.columns: pivot_final = pivot_final.drop(columns=['VNPT Man P/N'])
                     st.session_state.pivot_calculated = pivot_final
                     st.success("Inventory joined successfully!")
+                    st.markdown("### Inventory Data")
+                    st.dataframe(st.session_state.merged_inventory)
+                    st.markdown("### Pivot with Inventory")
+                    st.dataframe(st.session_state.pivot_calculated)
                 else:
                     st.warning("Could not extract inventory.")
     else:
@@ -436,6 +446,7 @@ with st.expander("4. Product Priority & Stock Allocation", expanded=True):
                 allocated = allocate_inventory(st.session_state.pivot_calculated, sorted_products)
                 st.session_state.allocated_df = allocated
                 st.success("Stock allocation completed!")
+                st.markdown("### Final Allocated Data")
                 st.dataframe(st.session_state.allocated_df)
     else:
         st.info("Please upload inventory and ensure 'Tổng tồn' is calculated in Step 3.")
