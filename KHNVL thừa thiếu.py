@@ -16,6 +16,7 @@ def init_state(key, default):
 
 init_state('processed_df', None)
 init_state('pivot', None)
+init_state('pivot_calculated', None)
 init_state('allocated_df', None)
 init_state('product_cols', [])
 init_state('product_priorities', {})
@@ -118,9 +119,34 @@ with st.expander("1. Upload BOM Files & Process", expanded=True):
             if pivot is not None:
                 st.session_state.processed_df, st.session_state.pivot = processed, pivot
                 st.success("BOMs processed successfully!")
-                
+
                 st.subheader("Final BOM Result Table")
                 st.dataframe(st.session_state.processed_df)
-                
+
                 st.subheader("Pivot Table")
                 st.dataframe(st.session_state.pivot)
+
+with st.expander("2. Production Plan & Calculate Demand", expanded=True):
+    if st.session_state.pivot is not None:
+        st.markdown("### Enter Production Quantity (KHSX) for each product")
+        pivot_df = st.session_state.pivot.copy()
+        
+        index_cols = ["Level Group", "Filter VNPT MAN P/N", "Description", "Popularity"]
+        rdbom_cols = [col for col in pivot_df.columns if col not in index_cols]
+        
+        cols = st.columns(3)
+        multipliers = {}
+        
+        for i, col in enumerate(rdbom_cols):
+            with cols[i % 3]:
+                multipliers[col] = st.number_input(f"Multiplier for {col}", min_value=0.0, value=1.0, step=1.0)
+                
+        if st.button("Calculate Demand"):
+            for col in rdbom_cols:
+                pivot_df[f"{col} - Calculated"] = pivot_df[col] * multipliers[col]
+            
+            st.session_state.pivot_calculated = pivot_df
+            st.success("Component quantities calculated successfully!")
+            st.dataframe(st.session_state.pivot_calculated)
+    else:
+        st.info("Please complete Step 1 to generate the pivot table first.")
