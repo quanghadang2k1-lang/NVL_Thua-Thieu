@@ -1,9 +1,8 @@
+%%writefile app.py
 import streamlit as st
 import pandas as pd
 import io
 import re
-from functools import reduce
-from openpyxl.styles import Alignment, Border, Side, PatternFill
 
 # --- Streamlit App Configuration ---
 st.set_page_config(layout="wide", page_title="BOM Allocation Tool")
@@ -11,7 +10,7 @@ st.title("BOM Matching & Stock Distribution Tool")
 st.markdown("Upload your BOMs, Inventory, and define your production plan to allocate stock.")
 
 # --- Session State Initialization ---
-def init_state(key, default): 
+def init_state(key, default):
     if key not in st.session_state: st.session_state[key] = default
 
 init_state('rdbom_df', None)
@@ -33,7 +32,7 @@ def load_excel_header_search(uploaded_file, sheet_keyword, keywords, is_bom=Fals
         xls = pd.ExcelFile(content_io, engine='openpyxl' if not uploaded_file.name.lower().endswith('.xls') else 'xlrd')
         sheet_name = next((sn for sn in xls.sheet_names if str(sheet_keyword).lower() in str(sn).lower()), None) if sheet_keyword else xls.sheet_names[0]
         if sheet_name is None: return None
-        
+
         temp_df = pd.read_excel(content_io, sheet_name=sheet_name, header=None)
         header_idx = 0
         for i, row in temp_df.iterrows():
@@ -41,7 +40,7 @@ def load_excel_header_search(uploaded_file, sheet_keyword, keywords, is_bom=Fals
             if all(kw.lower() in row_vals for kw in keywords):
                 header_idx = i
                 break
-                
+
         content_io.seek(0)
         df = pd.read_excel(content_io, sheet_name=sheet_name, header=header_idx)
         if is_bom:
@@ -56,14 +55,14 @@ def load_excel_header_search(uploaded_file, sheet_keyword, keywords, is_bom=Fals
 with st.expander("1. Upload BOM Files & Process", expanded=True):
     rdbom_files = st.file_uploader("Upload RDBOM.xlsx (Required)", type=["xlsx", "xls"], accept_multiple_files=True)
     manbom_files = st.file_uploader("Upload MANBOM.xlsx (Optional)", type=["xlsx", "xls"], accept_multiple_files=True)
-    
+
     if st.button("Process BOMs"):
         with st.spinner("Processing..."):
             if rdbom_files:
                 st.session_state.rdbom_df = pd.concat([load_excel_header_search(f, None, ['Level', 'VNPT P/N'], True, 'RDBOM') for f in rdbom_files], ignore_index=True)
             if manbom_files:
                 st.session_state.manbom_df = pd.concat([load_excel_header_search(f, None, ['VNPT P/N', 'Tỉ lệ tiêu hao'], True, 'MANBOM') for f in manbom_files], ignore_index=True)
-            
+
             if st.session_state.rdbom_df is not None:
                 rdbom = st.session_state.rdbom_df.copy()
                 rdbom['Base_Project'] = rdbom['Source_RDBOM'].str.replace(r'\s*\(\d+\)', '', regex=True).str.replace(r'\.xls[x]?$', '', regex=True, flags=re.IGNORECASE)
@@ -74,16 +73,16 @@ with st.expander("1. Upload BOM Files & Process", expanded=True):
                     merged = pd.merge(rdbom, manbom, on=['VNPT P/N', 'Base_Project'], how='left')
                 else:
                     merged = rdbom
-                
+
                 merged['Source_RDBOM'] = merged['Base_Project']
                 if 'Tỉ lệ tiêu hao' in merged.columns: merged = merged.rename(columns={'Tỉ lệ tiêu hao': 'consumption rate'})
-                for col in ['Quantity / Product ', 'Quantity / Product']: 
+                for col in ['Quantity / Product ', 'Quantity / Product']:
                     if col in merged.columns: merged = merged.rename(columns={col: 'Quantity/Product'})
                 merged['consumption rate'] = pd.to_numeric(merged.get('consumption rate', 0), errors='coerce').fillna(0)
                 merged['Quantity/Product'] = pd.to_numeric(merged.get('Quantity/Product', 0), errors='coerce').fillna(0)
                 merged['Standard quantity'] = merged['Quantity/Product'] + merged['consumption rate']
                 merged = merged[[c for c in ['Source_RDBOM', 'Source_MANBOM', 'VNPT P/N', 'Level', 'Description', 'VNPT MAN P/N', 'Quantity/Product', 'consumption rate', 'Standard quantity'] if c in merged.columns]]
-                
+
                 # Profiling
                 processed = merged.copy()
                 is_dup = processed.duplicated(subset=['Source_RDBOM', 'Level', 'VNPT MAN P/N'], keep='first')
@@ -92,17 +91,17 @@ with st.expander("1. Upload BOM Files & Process", expanded=True):
                 valid = processed[processed['Filter VNPT MAN P/N'] != ""]
                 counts = valid['Filter VNPT MAN P/N'].value_counts()
                 processed['Popularity'] = processed['Filter VNPT MAN P/N'].map(counts)
-                
+
                 g_dict = {k: " | ".join([f"{r['Level']},{r['Source_RDBOM']}" for _, r in v.iterrows()]) for k, v in valid.groupby('Filter VNPT MAN P/N')}
                 processed['Level Group'] = processed['Filter VNPT MAN P/N'].map(g_dict)
-                
+
                 processed['Pop_Num'] = pd.to_numeric(processed['Popularity'], errors='coerce')
                 idx_max = processed.groupby(['Level', 'Source_RDBOM'])['Pop_Num'].transform('idxmax')
                 mask = (processed['Filter VNPT MAN P/N'] == "") & idx_max.notna()
                 processed.loc[mask, 'Level Group'] = processed.loc[idx_max[mask], 'Level Group'].values
                 processed = processed[processed['Filter VNPT MAN P/N'] != ""].drop(columns=['Pop_Num'])
                 st.session_state.processed_df = processed
-                
+
                 # Pivot
                 pivot = pd.pivot_table(processed, index=["Level Group", "Filter VNPT MAN P/N", "Description", "Popularity"], columns=["Source_RDBOM"], values="Standard quantity", aggfunc="sum", fill_value=0).reset_index()
                 st.session_state.pivot = pivot.sort_values(by="Level Group").reset_index(drop=True)
@@ -123,7 +122,7 @@ with st.expander("3. Allocation & Download"):
     if st.session_state.pivot is not None:
         exclude = ["Level Group", "Filter VNPT MAN P/N", "Description", "Popularity", "TONG_TON", "Tổng tồn", "Tồn kho tốt", "Tồn kho clc", "Tồn NM tech", "Tồn NM scbh", "Tồn KHHV"]
         product_cols = [c for c in st.session_state.pivot.columns if c not in exclude and 'Calculated' not in str(c)]
-        
+
         st.write("Set Production Multipliers and Priorities (Lower number = Higher Priority):")
         cols = st.columns(len(product_cols))
         multipliers = {}
@@ -131,23 +130,23 @@ with st.expander("3. Allocation & Download"):
             with cols[i]:
                 multipliers[p] = st.number_input(f"Qty: {p}", min_value=0, value=1000)
                 st.session_state.product_priorities[p] = st.number_input(f"Prio: {p}", min_value=1, value=i+1)
-        
+
         if st.button("Run Full Allocation"):
             pivot = st.session_state.pivot.copy()
             product_cols.sort(key=lambda x: st.session_state.product_priorities.get(x, 999))
             st.session_state.product_cols = product_cols
-            
+
             for p in product_cols: pivot[f"{p} - Calculated"] = pivot[p] * multipliers[p]
-            
+
             # Union-Find Grouping
             parent = {i: i for i in pivot.index}
-            def find(i): 
+            def find(i):
                 if parent[i] == i: return i
                 parent[i] = find(parent[i]); return parent[i]
-            def union(i, j): 
+            def union(i, j):
                 root_i, root_j = find(i), find(j)
                 if root_i != root_j: parent[root_i] = root_j
-            
+
             usage_to_indices = {}
             for idx, row in pivot.iterrows():
                 usages = set([x.strip() for x in str(row['Level Group']).split('|')]) if pd.notna(row['Level Group']) else set()
@@ -155,10 +154,10 @@ with st.expander("3. Allocation & Download"):
                     usage_to_indices.setdefault(u, []).append(idx)
             for indices in usage_to_indices.values():
                 for i in range(1, len(indices)): union(indices[0], indices[i])
-            
+
             pool_dict = {}
             for idx in pivot.index: pool_dict.setdefault(find(idx), []).append(idx)
-            
+
             results = []
             for pool_id, indices in enumerate(pool_dict.values(), 1):
                 df_group = pivot.loc[indices].copy()
@@ -167,15 +166,15 @@ with st.expander("3. Allocation & Download"):
                 if not stock_col: df_group['Tổng tồn'] = 0; stock_col = 'Tổng tồn'
                 df_group[stock_col] = pd.to_numeric(df_group[stock_col], errors='coerce').fillna(0)
                 df_group = df_group.sort_values(by=['Popularity', stock_col], ascending=[True, True])
-                
+
                 df_group['Allocation Pool'] = pool_id
                 for p in product_cols:
                     df_group.rename(columns={p: f"{p} - Standard Qty", f"{p} - Calculated": f"{p} - SL theo KH"}, inplace=True)
                     df_group[f"{p} - SL sau phân bổ kho"] = 0.0
-                
+
                 group_remain = {p: df_group[f"{p} - SL theo KH"].max() if f"{p} - SL theo KH" in df_group.columns else 0.0 for p in product_cols}
                 main_idx = df_group.index[0]
-                
+
                 for idx, row in df_group.iterrows():
                     stock = row.get(stock_col, 0)
                     lg = str(row.get('Level Group', ''))
@@ -185,7 +184,7 @@ with st.expander("3. Allocation & Download"):
                             df_group.at[idx, f"{p} - SL sau phân bổ kho"] = use
                             group_remain[p] -= use; stock -= use
                     df_group.at[idx, 'Remaining_Stock'] = stock
-                    
+
                 for p in product_cols:
                     if group_remain[p] > 0:
                         valid_idx = [i for i, r in df_group.iterrows() if p in str(r.get('Level Group', ''))]
@@ -193,12 +192,12 @@ with st.expander("3. Allocation & Download"):
                         df_group.at[t_idx, f"{p} - SL sau phân bổ kho"] += group_remain[p]
                         df_group.at[t_idx, 'Remaining_Stock'] -= group_remain[p]
                 results.append(df_group)
-            
+
             alloc_df = pd.concat(results, ignore_index=True)
             alloc_df['Tổng KHSX'] = alloc_df[[f"{p} - SL sau phân bổ kho" for p in product_cols]].sum(axis=1)
             st.session_state.allocated_df = alloc_df
             st.success("Allocation complete!")
-            
+
             # Export
             output = io.BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
