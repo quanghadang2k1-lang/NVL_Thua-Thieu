@@ -58,7 +58,7 @@ def load_excel_header_search(uploaded_file, sheet_keyword, keywords, is_bom=Fals
         content_io.seek(0)
         df = pd.read_excel(content_io, sheet_name=sheet_name, header=header_idx, **kwargs)
         if is_bom:
-            if bom_type == 'RDBOM': df['Source_RDBOM'] = uploaded_file.name; df['Level'] = df['Level'].astype(str); df = df.ffill()
+            if bom_type == 'RDBOM': df['Source_RDBOM'] = uploaded_file.name; df['Level'] = df['Level'].astype(str).str.replace(r'\.0$', '', regex=True); df = df.ffill()
             if bom_type == 'MANBOM': df['Source_MANBOM'] = uploaded_file.name
         return df
     except Exception as e:
@@ -82,6 +82,8 @@ def process_boms(rdbom_files, manbom_files):
         merged = rdbom
 
     merged['Source_RDBOM'] = merged['Base_Project']
+    merged['Level'] = merged['Level'].astype(str).str.replace(r'\.0$', '', regex=True)
+    
     if 'Tỉ lệ tiêu hao' in merged.columns: merged = merged.rename(columns={'Tỉ lệ tiêu hao': 'consumption rate'})
     for col in ['Quantity / Product ', 'Quantity / Product']:
         if col in merged.columns: merged = merged.rename(columns={col: 'Quantity/Product'})
@@ -113,8 +115,8 @@ def process_boms(rdbom_files, manbom_files):
     processed = processed[final_cols]
 
     pivot = pd.pivot_table(processed, index=["Level Group", "Filter VNPT MAN P/N", "Description", "Popularity"], columns=["Source_RDBOM"], values="Standard quantity", aggfunc="sum", fill_value=0).reset_index()
-    #pivot['Level Group'] = pivot['Level Group'].astype(str)
-    #pivot = pivot.sort_values(by="Level Group").reset_index(drop=True)
+    pivot['Level Group'] = pivot['Level Group'].astype(str)
+    pivot = pivot.sort_values(by="Level Group").reset_index(drop=True)
     return processed, pivot
 
 def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv):
