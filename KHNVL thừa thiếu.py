@@ -113,8 +113,8 @@ def process_boms(rdbom_files, manbom_files):
     processed = processed[final_cols]
 
     pivot = pd.pivot_table(processed, index=["Level Group", "Filter VNPT MAN P/N", "Description", "Popularity"], columns=["Source_RDBOM"], values="Standard quantity", aggfunc="sum", fill_value=0).reset_index()
-    pivot['Level Group'] = pivot['Level Group'].astype(str)
-    pivot = pivot.sort_values(by="Level Group").reset_index(drop=True)
+    #pivot['Level Group'] = pivot['Level Group'].astype(str)
+    #pivot = pivot.sort_values(by="Level Group").reset_index(drop=True)
     return processed, pivot
 
 def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv):
