@@ -41,7 +41,7 @@ Dữ liệu được chuyển thành **Pivot Table**, trong đó:
 
 ## 4. Nhập dữ liệu tồn từ các bộ phận
 
-- Script đọc dữ liệu tồn kho từ tối đa 5 nguồn khác nhau:
+- Script đọc dữ liệu tồn kho từ các nguồn khác nhau:
   - Kho tốt
   - Kho CLC
   - Nhà máy Tech
