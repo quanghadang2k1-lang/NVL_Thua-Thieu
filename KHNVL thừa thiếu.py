@@ -15,6 +15,12 @@ def init_state(key, default):
     if key not in st.session_state: st.session_state[key] = default
 
 init_state('processed_df', None)
+init_state('pivot', None)
+init_state('pivot_calculated', None)
+init_state('merged_inventory', None)
+init_state('allocated_df', None)
+init_state('product_cols', [])
+init_state('product_priorities', {})
 
 # --- Helper Functions ---
 def load_excel_header_search(uploaded_file, sheet_keyword, keywords, is_bom=False, bom_type='RDBOM'):
@@ -52,22 +58,18 @@ def load_excel_header_search(uploaded_file, sheet_keyword, keywords, is_bom=Fals
         content_io.seek(0)
         df = pd.read_excel(content_io, sheet_name=sheet_name, header=header_idx, **kwargs)
         if is_bom:
-            if bom_type == 'RDBOM': 
-                df['Source_RDBOM'] = uploaded_file.name
-                df['Level'] = df['Level'].astype(str).str.replace(r'\.0$', '', regex=True)
-                df = df.ffill()
-            if bom_type == 'MANBOM': 
-                df['Source_MANBOM'] = uploaded_file.name
+            if bom_type == 'RDBOM': df['Source_RDBOM'] = uploaded_file.name; df['Level'] = df['Level'].astype(str).str.replace(r'\.0$', '', regex=True); df = df.ffill()
+            if bom_type == 'MANBOM': df['Source_MANBOM'] = uploaded_file.name
         return df
     except Exception as e:
         st.error(f"Error loading {uploaded_file.name}: {str(e)}")
         return None
 
 def process_boms(rdbom_files, manbom_files):
-    rdbom_df = pd.concat([load_excel_header_search(f, None, ['level', 'vnpt p/n'], True, 'RDBOM') for f in rdbom_files], ignore_index=True) if rdbom_files else None
-    manbom_df = pd.concat([load_excel_header_search(f, None, ['vnpt p/n', 'tỉ lệ tiêu hao'], True, 'MANBOM') for f in manbom_files], ignore_index=True) if manbom_files else None
+    rdbom_df = pd.concat([load_excel_header_search(f, None, ['Level', 'VNPT P/N'], True, 'RDBOM') for f in rdbom_files], ignore_index=True) if rdbom_files else None
+    manbom_df = pd.concat([load_excel_header_search(f, None, ['VNPT P/N', 'Tỉ lệ tiêu hao'], True, 'MANBOM') for f in manbom_files], ignore_index=True) if manbom_files else None
 
-    if rdbom_df is None: return None
+    if rdbom_df is None: return None, None
 
     rdbom = rdbom_df.copy()
     rdbom['Base_Project'] = rdbom['Source_RDBOM'].str.replace(r'\s*\(\d+\)', '', regex=True).str.replace(r'\.xls[x]?$', '', regex=True, flags=re.IGNORECASE)
@@ -89,21 +91,45 @@ def process_boms(rdbom_files, manbom_files):
     merged['Quantity/Product'] = pd.to_numeric(merged.get('Quantity/Product', 0), errors='coerce').fillna(0)
     merged['Standard quantity'] = merged['Quantity/Product'] + merged['consumption rate']
 
-    return merged
+    processed = merged.copy()
+    is_dup = processed.duplicated(subset=['Source_RDBOM', 'Level', 'VNPT MAN P/N'], keep='first')
+    processed['Filter VNPT MAN P/N'] = processed['VNPT MAN P/N'].fillna("")
+    processed.loc[is_dup, 'Filter VNPT MAN P/N'] = ""
+    valid = processed[processed['Filter VNPT MAN P/N'] != ""]
+    counts = valid['Filter VNPT MAN P/N'].value_counts()
+    processed['Popularity'] = processed['Filter VNPT MAN P/N'].map(counts)
+
+    g_dict = {k: " | ".join([f"{r['Level']},{r['Source_RDBOM']}" for _, r in v.iterrows()]) for k, v in valid.groupby('Filter VNPT MAN P/N')}
+    processed['Level Group'] = processed['Filter VNPT MAN P/N'].map(g_dict)
+
+    processed['Pop_Num'] = pd.to_numeric(processed['Popularity'], errors='coerce')
+    idx_max = processed.groupby(['Level', 'Source_RDBOM'])['Pop_Num'].transform('idxmax')
+    mask = (processed['Filter VNPT MAN P/N'] == "") & idx_max.notna()
+    processed.loc[mask, 'Level Group'] = processed.loc[idx_max[mask], 'Level Group'].values
+    processed = processed[processed['Filter VNPT MAN P/N'] != ""].drop(columns=['Pop_Num'])
+
+    if 'Description' not in processed.columns: processed['Description'] = ''
+
+    desired_cols = ['Source_RDBOM', 'Source_MANBOM', 'VNPT P/N', 'Level', 'Description', 'VNPT MAN P/N', 'Quantity/Product', 'consumption rate', 'Standard quantity', 'Filter VNPT MAN P/N', 'Popularity', 'Level Group']
+    final_cols = [col for col in desired_cols if col in processed.columns]
+    processed = processed[final_cols]
+
+    pivot = pd.pivot_table(processed, index=["Level Group", "Filter VNPT MAN P/N", "Description", "Popularity"], columns=["Source_RDBOM"], values="Standard quantity", aggfunc="sum", fill_value=0).reset_index()
+    pivot['Level Group'] = pivot['Level Group'].astype(str)
+    pivot = pivot.sort_values(by="Level Group").reset_index(drop=True)
+    return processed, pivot
 
 # --- UI Workflow ---
 with st.expander("1. Upload BOM Files & Process", expanded=True):
     rdbom_files = st.file_uploader("Upload RDBOM.xlsx (Required)", type=["xlsx", "xls"], accept_multiple_files=True)
     manbom_files = st.file_uploader("Upload MANBOM.xlsx (Optional)", type=["xlsx", "xls"], accept_multiple_files=True)
-    
     if st.button("Process BOMs"):
-        if not rdbom_files:
-            st.warning("Please upload at least one RDBOM file.")
-        else:
-            with st.spinner("Processing & Merging..."):
-                merged_df = process_boms(rdbom_files, manbom_files)
-                if merged_df is not None:
-                    st.session_state.processed_df = merged_df
-                    st.success("BOMs processed and merged successfully!")
-                    st.markdown("### Merged BOM Results")
-                    st.dataframe(st.session_state.processed_df)
+        with st.spinner("Processing..."):
+            processed, pivot = process_boms(rdbom_files, manbom_files)
+            if pivot is not None:
+                st.session_state.processed_df, st.session_state.pivot = processed, pivot
+                st.success("BOMs processed successfully!")
+                st.markdown("### Final BOM Results")
+                st.dataframe(st.session_state.processed_df)
+                st.markdown("### Pivot Table")
+                st.dataframe(st.session_state.pivot)
