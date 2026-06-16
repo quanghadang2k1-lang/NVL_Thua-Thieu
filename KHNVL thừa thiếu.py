@@ -476,21 +476,21 @@ def generate_excel(allocated_df, processed_df=None, pivot=None, merged_inventory
     return output
 
 # --- UI Workflow ---
-with st.expander("1. Upload BOM Files & Process", expanded=True):
+with st.expander("1. Upload BOM Files", expanded=True):
     rdbom_files = st.file_uploader("Upload RDBOM.xlsx (Required)", type=["xlsx", "xls"], accept_multiple_files=True)
     manbom_files = st.file_uploader("Upload MANBOM.xlsx (Optional)", type=["xlsx", "xls"], accept_multiple_files=True)
-    if st.button("Process BOMs"):
-        with st.spinner("Processing..."):
+    if st.button("Xử lí BOMs"):
+        with st.spinner("Đang xử lí..."):
             processed, pivot = process_boms(rdbom_files, manbom_files)
             if pivot is not None:
                 st.session_state.processed_df, st.session_state.pivot = processed, pivot
-                st.success("BOMs processed successfully!")
-                st.markdown("### Final BOM Results")
+                st.success("BOMs đã xử lí thành công!")
+                st.markdown("### Bảng kết quả BOM")
                 st.dataframe(st.session_state.processed_df)
-                st.markdown("### Pivot Table")
+                st.markdown("### Bảng Pivot")
                 st.dataframe(st.session_state.pivot)
 
-with st.expander("2. Production Plan & Calculate Demand", expanded=True):
+with st.expander("2. Kế hoạch sản xuất & Nhu cầu sản lượng", expanded=True):
     if st.session_state.pivot is not None:
         pivot_df = st.session_state.pivot.copy()
         index_cols = ["Level Group", "Filter VNPT MAN P/N", "Description", "Popularity"]
@@ -501,17 +501,17 @@ with st.expander("2. Production Plan & Calculate Demand", expanded=True):
         for i, col in enumerate(rdbom_cols):
             with cols[i % 3]:
                 multipliers[col] = st.number_input(f"Multiplier for {col}", min_value=0.0, value=1.0, step=1.0)
-        if st.button("Calculate Demand"):
+        if st.button("Tính nhu cầu"):
             for col in rdbom_cols:
                 pivot_df[f"{col} - Calculated"] = pivot_df[col] * multipliers[col]
             st.session_state.pivot_calculated = pivot_df
-            st.success("Demand calculated successfully!")
-            st.markdown("### Pivot with Demand")
+            st.success("Đã tính xong nhu cầu!")
+            st.markdown("### Bảng pivot kèm sản lượng theo KHSX")
             st.dataframe(st.session_state.pivot_calculated)
     else:
-        st.info("Please complete Step 1.")
+        st.info("Hãy hoàn thành bước 1.")
 
-with st.expander("3. Upload Inventory Files", expanded=True):
+with st.expander("3. Upload Files Tồn bộ phận", expanded=True):
     if st.session_state.pivot_calculated is not None:
         col1, col2 = st.columns(2)
         with col1:
@@ -521,8 +521,8 @@ with st.expander("3. Upload Inventory Files", expanded=True):
         with col2:
             f_scbh = st.file_uploader("Upload 'Nhà máy SCBH'", type=["xlsx", "xls"])
             f_khhv = st.file_uploader("Upload 'KHHV'", type=["xlsx", "xls"])
-        if st.button("Process Inventory"):
-            with st.spinner("Processing Inventory..."):
+        if st.button("Xử lí tồn BP"):
+            with st.spinner("Đang xử lí..."):
                 merged_inv = process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv)
                 if merged_inv is not None:
                     st.session_state.merged_inventory = merged_inv
@@ -531,37 +531,39 @@ with st.expander("3. Upload Inventory Files", expanded=True):
                     pivot_final = pd.merge(pivot_final, merged_inv[cols_to_merge], left_on='Filter VNPT MAN P/N', right_on='VNPT Man P/N', how='left')
                     if 'VNPT Man P/N' in pivot_final.columns: pivot_final = pivot_final.drop(columns=['VNPT Man P/N'])
                     st.session_state.pivot_calculated = pivot_final
-                    st.success("Inventory joined successfully!")
-                    st.markdown("### Inventory Data")
+                    st.success("Kết hợp dữ liệu tồn BP thành công!")
+                    st.markdown("### Dữ liệu tồn")
                     st.dataframe(st.session_state.merged_inventory)
-                    st.markdown("### Pivot with Inventory")
+                    st.markdown("### Bảng Pivot kèm tồn BP ")
                     st.dataframe(st.session_state.pivot_calculated)
                 else:
-                    st.warning("Could not extract inventory.")
+                    st.warning("Không thể trích xuất tồn BP.")
     else:
-        st.info("Please calculate demand in Step 2.")
+        st.info("Hãy tính nhu cầu sản lượng ở bước 2.")
 
-with st.expander("4. Product Priority & Stock Allocation", expanded=True):
+with st.expander("4. Mức độ ưu tiên sản phẩm & Phân bổ linh kiện ", expanded=True):
     if st.session_state.pivot_calculated is not None and 'Tổng tồn' in st.session_state.pivot_calculated.columns:
-        st.markdown("### Set Product Priority (Lower number = Higher Priority)")
+        st.markdown("### Đặt mức độ ưu tiên cho sản phẩm (Số nhỏ = Mức độ ưu tiên cao)")
+        st.markdown("## Linh kiện tồn sẽ được phân bổ theo thứ tự ưu tiên của sản phẩm")
+        st.markdown("# Để nguyên nếu không muốn đặt mức độ ưu tiên")
         cols = st.columns(3)
         priorities = {}
         for i, col in enumerate(st.session_state.product_cols):
             with cols[i % 3]:
                 priorities[col] = st.number_input(f"Priority for {col}", min_value=1, value=i+1, step=1)
 
-        if st.button("Allocate Stock"):
-            with st.spinner("Allocating components..."):
+        if st.button("Phân bổ"):
+            with st.spinner("Đang phân bổ linh kiện..."):
                 st.session_state.product_priorities = priorities
                 sorted_products = sorted(st.session_state.product_cols, key=lambda x: priorities.get(x, 999))
 
                 allocated = allocate_inventory(st.session_state.pivot_calculated, sorted_products)
                 st.session_state.allocated_df = allocated
-                st.success("Stock allocation completed!")
-                st.markdown("### Final Allocated Data")
+                st.success("Phân bổ linh kiện thành công!")
+                st.markdown("### Dữ liệu phân bổ cuối cùng")
                 st.dataframe(st.session_state.allocated_df)
     else:
-        st.info("Please upload inventory and ensure 'Tổng tồn' is calculated in Step 3.")
+        st.info("Hãy upload dữ liều tồn bộ phận và đảm bảo cột 'Tổng tồn' đã được tính ở bước 3.")
 
 #Download final result
 if st.session_state.get('allocated_df') is not None:
@@ -602,7 +604,7 @@ if st.session_state.get('allocated_df') is not None:
         )
 
     st.download_button(
-        label="📥 Download Final Allocation Result",
+        label="📥 Tải file kết quả cuối cùng",
         data=excel_bytes,
         file_name="final_allocation_result.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
