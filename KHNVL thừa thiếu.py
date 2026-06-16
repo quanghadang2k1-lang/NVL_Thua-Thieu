@@ -368,6 +368,20 @@ def allocate_inventory(pivot_df, product_cols):
     return allocated_df
 
 def generate_excel(allocated_df, processed_df=None, pivot=None, merged_inventory=None, summary_df=None):
+    # Reorder columns to group by metric instead of product
+    all_cols = list(allocated_df.columns)
+    fixed_start = [c for c in ['Level Group', 'Allocation Pool', 'Filter VNPT MAN P/N', 'Description', 'Popularity'] if c in all_cols]
+    std_cols_name = [c for c in all_cols if ' - Standard Qty' in c]
+    kh_cols_name = [c for c in all_cols if ' - SL theo KH' in c]
+    alloc_cols_name = [c for c in all_cols if ' - SL sau phân bổ kho' in c]
+    
+    # Preserve any remaining columns at the end
+    grouped_set = set(fixed_start + std_cols_name + kh_cols_name + alloc_cols_name)
+    end_cols = [c for c in all_cols if c not in grouped_set]
+    
+    new_order = fixed_start + std_cols_name + kh_cols_name + alloc_cols_name + end_cols
+    allocated_df = allocated_df[new_order]
+
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         allocated_df.to_excel(writer, sheet_name='Allocated', index=False)
@@ -549,9 +563,10 @@ with st.expander("4. Product Priority & Stock Allocation", expanded=True):
     else:
         st.info("Please upload inventory and ensure 'Tổng tồn' is calculated in Step 3.")
 
+#Download final result
 if st.session_state.get('allocated_df') is not None:
     st.markdown("### 5. Download Output")
-    
+
     # Generate summary dataframe
     summary_data = []
     p_cols = st.session_state.product_cols
