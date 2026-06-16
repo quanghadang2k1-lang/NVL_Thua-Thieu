@@ -367,6 +367,100 @@ def allocate_inventory(pivot_df, product_cols):
     allocated_df.loc[allocated_df['Allocation Pool'].duplicated(), 'Allocation Pool'] = ''
     return allocated_df
 
+def generate_excel(allocated_df, processed_df=None, pivot=None, merged_inventory=None, summary_df=None):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        allocated_df.to_excel(writer, sheet_name='Allocated', index=False)
+
+        if processed_df is not None:
+            processed_df.to_excel(writer, sheet_name='BOM Result', index=False)
+        if pivot is not None:
+            pivot.to_excel(writer, sheet_name='Pivot', index=False)
+        if merged_inventory is not None:
+            merged_inventory.to_excel(writer, sheet_name='Inventory', index=False)
+        if summary_df is not None:
+            summary_df.to_excel(writer, sheet_name='KHSX', index=False)
+
+        worksheet = writer.sheets['Allocated']
+        alloc_pool_col_idx = None
+        max_col = worksheet.max_column
+
+        std_cols = []
+        kh_cols = []
+        alloc_cols = []
+
+        for col_idx, col_name in enumerate(allocated_df.columns, 1):
+            col_str = str(col_name)
+            if col_str == 'Allocation Pool':
+                alloc_pool_col_idx = col_idx
+            if ' - Standard Qty' in col_str:
+                std_cols.append(col_idx)
+            elif ' - SL theo KH' in col_str:
+                kh_cols.append(col_idx)
+            elif ' - SL sau phân bổ kho' in col_str:
+                alloc_cols.append(col_idx)
+
+        fill_all = PatternFill(start_color="9BC2E6", end_color="9BC2E6", fill_type="solid")
+        fill_std = PatternFill(start_color="ED7D31", end_color="ED7D31", fill_type="solid")
+        fill_kh = PatternFill(start_color="70AD47", end_color="70AD47", fill_type="solid")
+        fill_alloc = PatternFill(start_color="FF0000", end_color="FF0000", fill_type="solid")
+
+        for col_idx in range(1, max_col + 1):
+            worksheet.cell(row=1, column=col_idx).fill = fill_all
+        for col_idx in std_cols:
+            worksheet.cell(row=1, column=col_idx).fill = fill_std
+        for col_idx in kh_cols:
+            worksheet.cell(row=1, column=col_idx).fill = fill_kh
+        for col_idx in alloc_cols:
+            worksheet.cell(row=1, column=col_idx).fill = fill_alloc
+
+        sep_cols = []
+        if std_cols:
+            sep_cols.append(min(std_cols) - 1)
+            sep_cols.append(max(std_cols))
+        if kh_cols:
+            sep_cols.append(max(kh_cols))
+        if alloc_cols:
+            sep_cols.append(max(alloc_cols))
+
+        medium_side = Side(style='medium')
+
+        for r in range(1, len(allocated_df) + 2):
+            for c in sep_cols:
+                if c > 0:
+                    cell = worksheet.cell(row=r, column=c)
+                    cell.border = Border(left=cell.border.left, right=medium_side, top=cell.border.top, bottom=cell.border.bottom)
+
+        if alloc_pool_col_idx:
+            center_alignment = Alignment(horizontal='center', vertical='center')
+            medium_bottom_border = Side(style='medium')
+
+            for r in range(1, len(allocated_df) + 2):
+                worksheet.cell(row=r, column=alloc_pool_col_idx).alignment = center_alignment
+
+            start_row = 2
+            for i in range(1, len(allocated_df)):
+                val = allocated_df['Allocation Pool'].iloc[i]
+                current_excel_row = i + 2
+                if val != '':
+                    prev_row = current_excel_row - 1
+                    if prev_row > start_row:
+                        worksheet.merge_cells(start_row=start_row, start_column=alloc_pool_col_idx, end_row=prev_row, end_column=alloc_pool_col_idx)
+                    for col in range(1, max_col + 1):
+                        cell = worksheet.cell(row=prev_row, column=col)
+                        cell.border = Border(left=cell.border.left, right=cell.border.right, top=cell.border.top, bottom=medium_bottom_border)
+                    start_row = current_excel_row
+
+            last_row = len(allocated_df) + 1
+            if last_row > start_row:
+                worksheet.merge_cells(start_row=start_row, start_column=alloc_pool_col_idx, end_row=last_row, end_column=alloc_pool_col_idx)
+            for col in range(1, max_col + 1):
+                cell = worksheet.cell(row=last_row, column=col)
+                cell.border = Border(left=cell.border.left, right=cell.border.right, top=cell.border.top, bottom=medium_bottom_border)
+
+    output.seek(0)
+    return output
+
 # --- UI Workflow ---
 with st.expander("1. Upload BOM Files & Process", expanded=True):
     rdbom_files = st.file_uploader("Upload RDBOM.xlsx (Required)", type=["xlsx", "xls"], accept_multiple_files=True)
@@ -454,3 +548,47 @@ with st.expander("4. Product Priority & Stock Allocation", expanded=True):
                 st.dataframe(st.session_state.allocated_df)
     else:
         st.info("Please upload inventory and ensure 'Tổng tồn' is calculated in Step 3.")
+
+if st.session_state.get('allocated_df') is not None:
+    st.markdown("### 5. Download Output")
+    
+    # Generate summary dataframe
+    summary_data = []
+    p_cols = st.session_state.product_cols
+    for p in p_cols:
+        priority = st.session_state.product_priorities.get(p, "")
+        multiplier = 0
+        std_col = f"{p} - Standard Qty"
+        calc_col = f"{p} - SL theo KH"
+
+        if std_col in st.session_state.allocated_df.columns and calc_col in st.session_state.allocated_df.columns:
+            valid_rows = st.session_state.allocated_df[st.session_state.allocated_df[std_col] > 0]
+            if not valid_rows.empty:
+                multiplier = valid_rows.iloc[0][calc_col] / valid_rows.iloc[0][std_col]
+                multiplier = round(multiplier, 4)
+                if multiplier.is_integer():
+                    multiplier = int(multiplier)
+
+        summary_data.append({
+            'Tên sản phẩm': p,
+            'Sản lượng (KHSX)': multiplier,
+            'Mức độ ưu tiên': priority
+        })
+
+    summary_df = pd.DataFrame(summary_data)
+
+    with st.spinner("Preparing Excel file for download..."):
+        excel_bytes = generate_excel(
+            st.session_state.allocated_df,
+            st.session_state.get('processed_df'),
+            st.session_state.get('pivot'),
+            st.session_state.get('merged_inventory'),
+            summary_df
+        )
+
+    st.download_button(
+        label="📥 Download Final Allocation Result",
+        data=excel_bytes,
+        file_name="final_allocation_result.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
