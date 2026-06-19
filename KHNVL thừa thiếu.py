@@ -119,18 +119,20 @@ def process_boms(rdbom_files, manbom_files):
     pivot = pivot.sort_values(by="Level Group").reset_index(drop=True)
     return processed, pivot
 
-def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv):
+def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv, f_phu_kien_ton=None):
     dfs = []
     # 1. kho_tot
     df_tot = load_excel_header_search(f_tot, "Nhập xuất tồn", ["mã vật tư", "mô tả"])
     if df_tot is not None and not df_tot.empty:
         if str(df_tot.iloc[0].values[0]).strip().startswith('('): df_tot = df_tot.iloc[1:].reset_index(drop=True)
-        cuoi_ky_cols = [col for col in df_tot.columns if 'cuối kỳ' in str(col).lower()]
-        target_cols = [col for col in df_tot.columns if str(col).lower() in ['mã vật tư']] + cuoi_ky_cols
-        if len(target_cols) >= 2:
+        ma_vat_tu_cols = [col for col in df_tot.columns if 'mã vật tư' in str(col).strip().lower()]
+        cuoi_ky_cols = [col for col in df_tot.columns if 'cuối kỳ' in str(col).lower() or 'tổng tồn' in str(col).lower()]
+        target_cols = (ma_vat_tu_cols[:1] if ma_vat_tu_cols else []) + (cuoi_ky_cols[:1] if cuoi_ky_cols else [])
+        if len(target_cols) == 2:
             df_tot = df_tot[target_cols].copy()
-            df_tot.columns = ['VNPT Man P/N', 'Tồn kho tốt'] + list(df_tot.columns[2:])
-            dfs.append(df_tot[['VNPT Man P/N', 'Tồn kho tốt']])
+            df_tot.columns = ['VNPT Man P/N', 'Tồn kho tốt']
+            dfs.append(df_tot)
+
     # 2. kho_clc
     df_clc = load_excel_header_search(f_clc, "Chi tiết tốt", ["mã vật tư", "mô tả"])
     if df_clc is not None and not df_clc.empty:
@@ -140,6 +142,7 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv):
             df_clc = df_clc[target_cols].copy()
             df_clc.columns = ['VNPT Man P/N', 'Tồn kho clc']
             dfs.append(df_clc)
+
     # 3. nha_may_tech
     df_tech = load_excel_header_search(f_tech, "TECH TỔNG", ["row labels", "tên vật tư"])
     if df_tech is not None and not df_tech.empty:
@@ -148,6 +151,7 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv):
             df_tech = df_tech[target_cols].copy()
             df_tech.columns = ['VNPT Man P/N', 'Tồn NM tech']
             dfs.append(df_tech)
+
     # 4. nha_may_scbh
     df_scbh = load_excel_header_search(f_scbh, "SCBH", ["row labels", "mã vật tư"])
     if df_scbh is not None and not df_scbh.empty:
@@ -158,17 +162,31 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv):
             df_scbh = df_scbh[target_cols].copy()
             df_scbh.columns = ['VNPT Man P/N', 'Tồn NM scbh']
             dfs.append(df_scbh)
+
     # 5. khhv
     df_khhv = load_excel_header_search(f_khhv, "TH", ["vnpt pn", "description"])
     if df_khhv is not None and not df_khhv.empty:
-        tong_cols = [col for col in df_khhv.columns if 'tổng' in str(col).lower()]
-        last_tong = [tong_cols[-1]] if tong_cols else []
-        base_cols = [col for col in df_khhv.columns if str(col).lower() in ['vnpt p/n', 'vnpt pn']]
-        target_cols = base_cols + last_tong
-        if len(target_cols) >= 2:
-            df_khhv = df_khhv[target_cols].copy()
+        tong_indices = [i for i, col in enumerate(df_khhv.columns) if str(col).strip().lower() == 'tổng']
+        last_tong_idx = [tong_indices[-1]] if tong_indices else []
+        base_indices = [i for i, col in enumerate(df_khhv.columns) if str(col).strip().lower() in ['vnpt p/n', 'vnpt pn']]
+        if not base_indices:
+            base_indices = [i for i, col in enumerate(df_khhv.columns) if str(col).strip().lower() in ['mã nvl', 'tên lk']]
+        target_indices = base_indices[:1] + last_tong_idx
+        if len(target_indices) == 2:
+            df_khhv = df_khhv.iloc[:, target_indices].copy()
             df_khhv.columns = ['VNPT Man P/N', 'Tồn KHHV']
             dfs.append(df_khhv)
+            
+    # 6. phu_kien_ton
+    df_phu_kien_ton = load_excel_header_search(f_phu_kien_ton, None, ["mã vnpt", "tồn kho"])
+    if df_phu_kien_ton is not None and not df_phu_kien_ton.empty:
+        ma_vnpt_cols = [col for col in df_phu_kien_ton.columns if 'mã vnpt' in str(col).lower()]
+        ton_kho_cols = [col for col in df_phu_kien_ton.columns if 'tồn kho' in str(col).lower()]
+        target_cols = (ma_vnpt_cols[:1] if ma_vnpt_cols else []) + (ton_kho_cols[:1] if ton_kho_cols else [])
+        if len(target_cols) == 2:
+            df_phu_kien_ton = df_phu_kien_ton[target_cols].copy()
+            df_phu_kien_ton.columns = ['VNPT Man P/N', 'Phụ kiện tồn']
+            dfs.append(df_phu_kien_ton)
 
     if dfs:
         for i in range(len(dfs)):
@@ -178,7 +196,7 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv):
         stock_cols = [col for col in merged_inventory.columns if col != 'VNPT Man P/N']
         for col in stock_cols:
             merged_inventory[col] = pd.to_numeric(merged_inventory[col], errors='coerce').fillna(0)
-        sum_cols = [col for col in stock_cols if col != 'Tồn kho clc']
+        sum_cols = [col for col in stock_cols if col not in ['Tồn kho clc', 'Phụ kiện tồn']]
         merged_inventory['Tổng tồn'] = merged_inventory[sum_cols].sum(axis=1)
         return merged_inventory
     return None
@@ -356,8 +374,10 @@ def allocate_inventory(pivot_df, product_cols):
     allocated_df['Tổng KHSX'] = allocated_df[[c for c in all_cols if 'SL sau phân bổ kho' in c]].sum(axis=1)
     if 'Tồn kho clc' in allocated_df.columns:
         allocated_df['Tồn Active'] = allocated_df['Remaining_Stock'] - pd.to_numeric(allocated_df['Tồn kho clc'], errors='coerce').fillna(0)
+    if 'Tồn kho clc' in allocated_df.columns:
+        allocated_df['Tồn Active'] = allocated_df['Remaining_Stock'] - pd.to_numeric(allocated_df['Phụ kiện tồn'], errors='coerce').fillna(0)
 
-    end_cols = [c for c in ['Tổng KHSX', 'Tồn kho tốt', 'Tồn kho clc', 'Tồn NM tech', 'Tồn NM scbh', 'Tồn KHHV', 'Tổng tồn', 'Remaining_Stock', 'Tồn Active'] if c in allocated_df.columns]
+    end_cols = [c for c in ['Tổng KHSX', 'Tồn kho tốt', 'Tồn kho clc', 'Tồn NM tech', 'Tồn NM scbh', 'Tồn KHHV', 'Phụ kiện tồn', 'Tổng tồn', 'Remaining_Stock', 'Tồn Active'] if c in allocated_df.columns]
 
     final_ordered_cols = fixed_start_cols + prod_cols_ordered + end_cols
     final_ordered_cols = [c for c in final_ordered_cols if c in allocated_df.columns]
@@ -374,11 +394,11 @@ def generate_excel(allocated_df, processed_df=None, pivot=None, merged_inventory
     std_cols_name = [c for c in all_cols if ' - Standard Qty' in c]
     kh_cols_name = [c for c in all_cols if ' - SL theo KH' in c]
     alloc_cols_name = [c for c in all_cols if ' - SL sau phân bổ kho' in c]
-    
+
     # Preserve any remaining columns at the end
     grouped_set = set(fixed_start + std_cols_name + kh_cols_name + alloc_cols_name)
     end_cols = [c for c in all_cols if c not in grouped_set]
-    
+
     new_order = fixed_start + std_cols_name + kh_cols_name + alloc_cols_name + end_cols
     allocated_df = allocated_df[new_order]
 
