@@ -571,7 +571,7 @@ with st.expander("4. Mức độ ưu tiên sản phẩm & Phân bổ linh kiện
         priorities = {}
         for i, col in enumerate(st.session_state.product_cols):
             with cols[i % 3]:
-                priorities[col] = st.number_input(f'Priority of {col}', min_value=1, value=i , step=1)
+                priorities[col] = st.number_input(f'Priority of {col}', min_value=1, value=i + 1, step=1)
 
         if st.button("Phân bổ"):
             with st.spinner("Đang phân bổ linh kiện..."):
