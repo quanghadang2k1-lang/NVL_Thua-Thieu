@@ -565,13 +565,13 @@ with st.expander("3. Upload Files Tồn bộ phận", expanded=True):
 with st.expander("4. Mức độ ưu tiên sản phẩm & Phân bổ linh kiện ", expanded=True):
     if st.session_state.pivot_calculated is not None and 'Tổng tồn' in st.session_state.pivot_calculated.columns:
         st.markdown("### Đặt mức độ ưu tiên cho sản phẩm (Số nhỏ = Mức độ ưu tiên cao)")
-        st.markdown("## Linh kiện tồn sẽ được phân bổ theo thứ tự ưu tiên của sản phẩm")
-        st.markdown("# Để nguyên nếu không muốn đặt mức độ ưu tiên")
+        st.markdown("#### Linh kiện tồn sẽ được phân bổ theo thứ tự ưu tiên của sản phẩm")
+        st.markdown("##### Để nguyên nếu không muốn đặt mức độ ưu tiên")
         cols = st.columns(3)
         priorities = {}
         for i, col in enumerate(st.session_state.product_cols):
             with cols[i % 3]:
-                priorities[col] = st.number_input(f"Priority for {col}", min_value=1, value=i+1, step=1)
+                priorities[col] = st.number_input({col}, min_value=1, step=1)
 
         if st.button("Phân bổ"):
             with st.spinner("Đang phân bổ linh kiện..."):
