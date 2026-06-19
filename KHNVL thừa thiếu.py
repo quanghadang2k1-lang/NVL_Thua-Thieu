@@ -541,13 +541,14 @@ with st.expander("3. Upload Files Tồn bộ phận", expanded=True):
         with col2:
             f_scbh = st.file_uploader("Upload 'Nhà máy SCBH'", type=["xlsx", "xls"])
             f_khhv = st.file_uploader("Upload 'KHHV'", type=["xlsx", "xls"])
+            f_phu_kien_ton = st.file_uploader("Upload 'Phụ kiện tồn'", type=["xlsx", "xls"])
         if st.button("Xử lí tồn BP"):
             with st.spinner("Đang xử lí..."):
-                merged_inv = process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv)
+                merged_inv = process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv, f_phu_kien_ton)
                 if merged_inv is not None:
                     st.session_state.merged_inventory = merged_inv
                     pivot_final = st.session_state.pivot_calculated.copy()
-                    cols_to_merge = [c for c in ['VNPT Man P/N', 'Tồn kho tốt', 'Tồn kho clc', 'Tồn NM tech', 'Tồn NM scbh', 'Tồn KHHV', 'Tổng tồn'] if c in merged_inv.columns]
+                    cols_to_merge = [c for c in ['VNPT Man P/N', 'Tồn kho tốt', 'Tồn kho clc', 'Tồn NM tech', 'Tồn NM scbh', 'Tồn KHHV', 'Phụ kiện tồn', 'Tổng tồn'] if c in merged_inv.columns]
                     pivot_final = pd.merge(pivot_final, merged_inv[cols_to_merge], left_on='Filter VNPT MAN P/N', right_on='VNPT Man P/N', how='left')
                     if 'VNPT Man P/N' in pivot_final.columns: pivot_final = pivot_final.drop(columns=['VNPT Man P/N'])
                     st.session_state.pivot_calculated = pivot_final
