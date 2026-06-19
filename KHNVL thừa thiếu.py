@@ -122,7 +122,7 @@ def process_boms(rdbom_files, manbom_files):
 def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv, f_phu_kien_ton=None):
     dfs = []
     # 1. kho_tot
-    df_tot = load_excel_header_search(f_tot, "Nhập xuất tồn", ["mã vật tư", "mô tả"])
+    df_tot = load_excel_header_search(f_tot, "Nhập xuất tồn", ["Mã vật tư", ("Mô tả", "Tên vật tư")])  
     if df_tot is not None and not df_tot.empty:
         if str(df_tot.iloc[0].values[0]).strip().startswith('('): df_tot = df_tot.iloc[1:].reset_index(drop=True)
         ma_vat_tu_cols = [col for col in df_tot.columns if 'mã vật tư' in str(col).strip().lower()]
@@ -164,7 +164,7 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv, f_phu_kien_ton=None)
             dfs.append(df_scbh)
 
     # 5. khhv
-    df_khhv = load_excel_header_search(f_khhv, "TH", ["vnpt pn", "description"])
+    df_khhv = load_excel_header_search(f_khhv, "TH", [("VNPT PN", "Mã NVL"), ("Description", "Tên LK")])
     if df_khhv is not None and not df_khhv.empty:
         tong_indices = [i for i, col in enumerate(df_khhv.columns) if str(col).strip().lower() == 'tổng']
         last_tong_idx = [tong_indices[-1]] if tong_indices else []
@@ -178,7 +178,7 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv, f_phu_kien_ton=None)
             dfs.append(df_khhv)
             
     # 6. phu_kien_ton
-    df_phu_kien_ton = load_excel_header_search(f_phu_kien_ton, None, ["mã vnpt", "tồn kho"])
+    df_phu_kien_ton = load_excel_header_search(f_phu_kien_ton, None, ["Mã VNPT 16 ký tự", "Tồn kho còn lại"])
     if df_phu_kien_ton is not None and not df_phu_kien_ton.empty:
         ma_vnpt_cols = [col for col in df_phu_kien_ton.columns if 'mã vnpt' in str(col).lower()]
         ton_kho_cols = [col for col in df_phu_kien_ton.columns if 'tồn kho' in str(col).lower()]
@@ -571,7 +571,7 @@ with st.expander("4. Mức độ ưu tiên sản phẩm & Phân bổ linh kiện
         priorities = {}
         for i, col in enumerate(st.session_state.product_cols):
             with cols[i % 3]:
-                priorities[col] = st.number_input({col}, min_value=1, step=1)
+                priorities[col] = st.number_input({col}, min_value=1, value = i, step=1)
 
         if st.button("Phân bổ"):
             with st.spinner("Đang phân bổ linh kiện..."):
