@@ -126,6 +126,7 @@ def process_boms(rdbom_files, manbom_files):
     pivot = pivot.drop_duplicates(subset=["Filter VNPT MAN P/N"]).reset_index(drop=True)
     return processed, pivot
 
+#Function for streamlit
 def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv, f_phu_kien_ton=None):
     dfs = []
     # 1. kho_tot
@@ -162,10 +163,10 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv, f_phu_kien_ton=None)
     # 4. nha_may_scbh
     df_scbh = load_excel_header_search(f_scbh, "SCBH", ["row labels", "mã vật tư"])
     if df_scbh is not None and not df_scbh.empty:
-        target_cols = [col for col in df_scbh.columns if str(col).lower() in ['mã vật tư', 'tồn cuối']]
-        if 'Row Labels' in df_scbh.columns and not any(str(c).lower() == 'mã vật tư' for c in target_cols):
-            target_cols.insert(0, 'Row Labels')
-        if len(target_cols) >= 2:
+        ma_vat_tu_cols = [col for col in df_scbh.columns if 'mã vật tư' in str(col).strip().lower() or 'row labels' in str(col).strip().lower()]
+        ton_cuoi_cols = [col for col in df_scbh.columns if 'tồn cuối' in str(col).strip().lower()]
+        target_cols = (ma_vat_tu_cols[:1] if ma_vat_tu_cols else []) + (ton_cuoi_cols[:1] if ton_cuoi_cols else [])
+        if len(target_cols) == 2:
             df_scbh = df_scbh[target_cols].copy()
             df_scbh.columns = ['VNPT Man P/N', 'Tồn NM scbh']
             dfs.append(df_scbh)
@@ -173,6 +174,30 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv, f_phu_kien_ton=None)
     # 5. khhv
     df_khhv = load_excel_header_search(f_khhv, "TH", ["Tổng"])
     if df_khhv is not None and not df_khhv.empty:
+        cols = list(df_khhv.columns)
+        max_counter = 0
+        for j in range(len(cols)):
+            val = cols[j]
+            if pd.isna(val) or str(val).strip() == '' or str(val).startswith('Unnamed:'):
+                counter = 0
+                for i in range(len(df_khhv)):
+                    counter += 1
+                    next_val = df_khhv.iat[i, j]
+                    if not pd.isna(next_val) and str(next_val).strip() != '':
+                        cols[j] = next_val
+                        if counter > max_counter:
+                            max_counter = counter
+                        break
+
+        df_khhv.columns = cols
+        cols_series = pd.Series(df_khhv.columns)
+        cols_series = cols_series.mask(cols_series.astype(str).str.startswith('Unnamed:') | cols_series.isna()).ffill()
+        df_khhv.columns = cols_series
+
+        rows_to_remove = max_counter
+        if rows_to_remove > 0:
+            df_khhv = df_khhv.drop(index=range(0, rows_to_remove)).reset_index(drop=True)
+
         tong_indices = [i for i, col in enumerate(df_khhv.columns) if str(col).strip().lower() == 'tổng']
         last_tong_idx = [tong_indices[-1]] if tong_indices else []
         base_indices = [i for i, col in enumerate(df_khhv.columns) if str(col).strip().lower() in ['vnpt p/n', 'vnpt pn']]
@@ -199,15 +224,15 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv, f_phu_kien_ton=None)
         for i in range(len(dfs)):
             dfs[i]['VNPT Man P/N'] = dfs[i]['VNPT Man P/N'].astype(str).str.strip()
             dfs[i] = dfs[i][~dfs[i]['VNPT Man P/N'].str.lower().isin(['', 'nan', '(blank)', 'none', 'null'])]
-            
+
             # Ensure columns except the key are numeric before grouping
             for col in dfs[i].columns:
                 if col != 'VNPT Man P/N':
                     dfs[i][col] = pd.to_numeric(dfs[i][col], errors='coerce').fillna(0)
-            
+
             # Aggregate to prevent duplicates
             dfs[i] = dfs[i].groupby('VNPT Man P/N', as_index=False).sum(numeric_only=True)
-            
+
         merged_inventory = reduce(lambda left, right: pd.merge(left, right, on='VNPT Man P/N', how='outer'), dfs)
         stock_cols = [col for col in merged_inventory.columns if col != 'VNPT Man P/N']
         for col in stock_cols:
@@ -216,6 +241,7 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv, f_phu_kien_ton=None)
         merged_inventory['Tổng tồn'] = merged_inventory[sum_cols].sum(axis=1)
         return merged_inventory
     return None
+
 
 def allocate_inventory(pivot_df, product_cols):
     def get_usages(lg_str):
@@ -306,7 +332,7 @@ def allocate_inventory(pivot_df, product_cols):
         results.append(group_df)
 
     allocated_df = pd.concat(results, ignore_index=True)
-    
+
 # --- Flaw Resolution Logic ---
     def resolve_pool_flaws(df_pool):
         max_iters = 20
