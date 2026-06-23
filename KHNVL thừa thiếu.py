@@ -127,6 +127,7 @@ def process_boms(rdbom_files, manbom_files):
     return processed, pivot
 
 #Function for streamlit
+#Function for streamlit
 def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv, f_phu_kien_ton=None):
     dfs = []
     # 1. kho_tot
@@ -172,7 +173,11 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv, f_phu_kien_ton=None)
             dfs.append(df_scbh)
 
     #5. KHHV
-    df_khhv = load_excel_header_search(f_khhv, "TH", [("VNPT PN", "Mã NVL"), ("Description", "Tên LK")])
+    df_khhv = load_excel_header_search(f_khhv, "TH", ["Tổng"])
+    if df_khhv is None or df_khhv.empty:
+        df_khhv = load_excel_header_search(f_khhv, "TH", ["Mã nvl"])
+    if df_khhv is None or df_khhv.empty:
+        df_khhv = load_excel_header_search(f_khhv, "TH", ["vnpt pn"])
 
     if df_khhv is not None and not df_khhv.empty:
         cols = list(df_khhv.columns)
@@ -190,18 +195,18 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv, f_phu_kien_ton=None)
                             max_counter = counter
                         break
 
-    # Assign the populated list back to columns
-    df_khhv.columns = cols
+        # Assign the populated list back to columns
+        df_khhv.columns = cols
 
-    # Forward fill the headers to handle any remaining 'Unnamed' or NaNs
-    cols_series = pd.Series(df_khhv.columns)
-    cols_series = cols_series.mask(cols_series.astype(str).str.startswith('Unnamed:') | cols_series.isna()).ffill()
-    df_khhv.columns = cols_series
+        # Forward fill the headers to handle any remaining 'Unnamed' or NaNs
+        cols_series = pd.Series(df_khhv.columns)
+        cols_series = cols_series.mask(cols_series.astype(str).str.startswith('Unnamed:') | cols_series.isna()).ffill()
+        df_khhv.columns = cols_series
 
-    rows_to_remove = max_counter
-    if rows_to_remove > 0:
-        df_khhv = df_khhv.drop(index=range(0, rows_to_remove)).reset_index(drop=True)
-        print(f"Shifted empty values up to the header and removed {rows_to_remove} row(s).")
+        rows_to_remove = max_counter
+        if rows_to_remove > 0:
+            df_khhv = df_khhv.drop(index=range(0, rows_to_remove)).reset_index(drop=True)
+            print(f"Shifted empty values up to the header and removed {rows_to_remove} row(s).")
 
         tong_indices = [i for i, col in enumerate(df_khhv.columns) if str(col).strip().lower() == 'tổng']
         last_tong_idx = [tong_indices[-1]] if tong_indices else []
@@ -246,6 +251,7 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv, f_phu_kien_ton=None)
         merged_inventory['Tổng tồn'] = merged_inventory[sum_cols].sum(axis=1)
         return merged_inventory
     return None
+
 
 
 def allocate_inventory(pivot_df, product_cols):
