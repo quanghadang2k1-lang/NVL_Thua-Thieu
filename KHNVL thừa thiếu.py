@@ -172,11 +172,7 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv, f_phu_kien_ton=None)
             dfs.append(df_scbh)
 
     #5. KHHV
-    df_khhv = load_excel_header_search(f_khhv, "TH", ["Tổng"])
-    if df_khhv is None or df_khhv.empty:
-        df_khhv = load_excel_header_search(f_khhv, "TH", ["mã nvl"])
-    if df_khhv is None or df_khhv.empty:
-        df_khhv = load_excel_header_search(f_khhv, "TH", ["vnpt pn"])
+    df_khhv = load_excel_header_search(f_khhv, "TH", [("VNPT PN", "Mã NVL"), ("Description", "Tên LK")])
 
     if df_khhv is not None and not df_khhv.empty:
         cols = list(df_khhv.columns)
@@ -194,14 +190,18 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv, f_phu_kien_ton=None)
                             max_counter = counter
                         break
 
-        df_khhv.columns = cols
-        cols_series = pd.Series(df_khhv.columns)
-        cols_series = cols_series.mask(cols_series.astype(str).str.startswith('Unnamed:') | cols_series.isna()).ffill()
-        df_khhv.columns = cols_series
+    # Assign the populated list back to columns
+    df_khhv.columns = cols
 
-        rows_to_remove = max_counter
-        if rows_to_remove > 0:
-            df_khhv = df_khhv.drop(index=range(0, rows_to_remove)).reset_index(drop=True)
+    # Forward fill the headers to handle any remaining 'Unnamed' or NaNs
+    cols_series = pd.Series(df_khhv.columns)
+    cols_series = cols_series.mask(cols_series.astype(str).str.startswith('Unnamed:') | cols_series.isna()).ffill()
+    df_khhv.columns = cols_series
+
+    rows_to_remove = max_counter
+    if rows_to_remove > 0:
+        df_khhv = df_khhv.drop(index=range(0, rows_to_remove)).reset_index(drop=True)
+        print(f"Shifted empty values up to the header and removed {rows_to_remove} row(s).")
 
         tong_indices = [i for i, col in enumerate(df_khhv.columns) if str(col).strip().lower() == 'tổng']
         last_tong_idx = [tong_indices[-1]] if tong_indices else []
