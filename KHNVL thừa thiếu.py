@@ -92,18 +92,24 @@ def process_boms(rdbom_files, manbom_files):
     merged['Standard quantity'] = merged['Quantity/Product'] + merged['consumption rate']
 
     processed = merged.copy()
-    is_dup = processed.duplicated(subset=['Source_RDBOM', 'Level', 'VNPT MAN P/N'], keep='first')
+    if 'Source_MANBOM' in processed.columns:
+        processed['Source_MANBOM'] = processed['Source_MANBOM'].fillna('').str.replace(r'\s*\(\d+\)', '', regex=True).str.replace(r'\.xls[x]?$', '', regex=True, flags=re.IGNORECASE)
+
+    product_col = 'Base_Project' if 'Base_Project' in processed.columns else 'Source_RDBOM'
+    is_dup = processed.duplicated(subset=[product_col, 'Level', 'VNPT MAN P/N'], keep='first')
     processed['Filter VNPT MAN P/N'] = processed['VNPT MAN P/N'].fillna("")
     processed.loc[is_dup, 'Filter VNPT MAN P/N'] = ""
+    
     valid = processed[processed['Filter VNPT MAN P/N'] != ""]
     counts = valid['Filter VNPT MAN P/N'].value_counts()
     processed['Popularity'] = processed['Filter VNPT MAN P/N'].map(counts)
+    processed.loc[processed["Filter VNPT MAN P/N"] == "", "Popularity"] = pd.NA
 
-    g_dict = {k: " | ".join([f"{r['Level']} ,{r['Source_RDBOM']}" for _, r in v.iterrows()]) for k, v in valid.groupby('Filter VNPT MAN P/N')}
+    g_dict = {k: " | ".join([f"{r['Level']} ,{r[product_col]}" for _, r in v.iterrows()]) for k, v in valid.groupby('Filter VNPT MAN P/N')}
     processed['Level Group'] = processed['Filter VNPT MAN P/N'].map(g_dict)
 
     processed['Pop_Num'] = pd.to_numeric(processed['Popularity'], errors='coerce')
-    idx_max = processed.groupby(['Level', 'Source_RDBOM'])['Pop_Num'].transform('idxmax')
+    idx_max = processed.groupby(['Level', product_col])['Pop_Num'].transform('idxmax')
     mask = (processed['Filter VNPT MAN P/N'] == "") & idx_max.notna()
     processed.loc[mask, 'Level Group'] = processed.loc[idx_max[mask], 'Level Group'].values
     processed = processed[processed['Filter VNPT MAN P/N'] != ""].drop(columns=['Pop_Num'])
@@ -117,6 +123,7 @@ def process_boms(rdbom_files, manbom_files):
     pivot = pd.pivot_table(processed, index=["Level Group", "Filter VNPT MAN P/N", "Description", "Popularity"], columns=["Source_RDBOM"], values="Standard quantity", aggfunc="sum", fill_value=0).reset_index()
     pivot['Level Group'] = pivot['Level Group'].astype(str)
     pivot = pivot.sort_values(by="Level Group").reset_index(drop=True)
+    pivot = pivot.drop_duplicates(subset=["Filter VNPT MAN P/N"]).reset_index(drop=True)
     return processed, pivot
 
 def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv, f_phu_kien_ton=None):
@@ -192,6 +199,15 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv, f_phu_kien_ton=None)
         for i in range(len(dfs)):
             dfs[i]['VNPT Man P/N'] = dfs[i]['VNPT Man P/N'].astype(str).str.strip()
             dfs[i] = dfs[i][~dfs[i]['VNPT Man P/N'].str.lower().isin(['', 'nan', '(blank)', 'none', 'null'])]
+            
+            # Ensure columns except the key are numeric before grouping
+            for col in dfs[i].columns:
+                if col != 'VNPT Man P/N':
+                    dfs[i][col] = pd.to_numeric(dfs[i][col], errors='coerce').fillna(0)
+            
+            # Aggregate to prevent duplicates
+            dfs[i] = dfs[i].groupby('VNPT Man P/N', as_index=False).sum(numeric_only=True)
+            
         merged_inventory = reduce(lambda left, right: pd.merge(left, right, on='VNPT Man P/N', how='outer'), dfs)
         stock_cols = [col for col in merged_inventory.columns if col != 'VNPT Man P/N']
         for col in stock_cols:
@@ -286,8 +302,7 @@ def allocate_inventory(pivot_df, product_cols):
         results.append(group_df)
 
     allocated_df = pd.concat(results, ignore_index=True)
-
-    # --- Flaw Resolution Logic ---
+# --- Flaw Resolution Logic ---
     def resolve_pool_flaws(df_pool):
         max_iters = 20
         for _ in range(max_iters):
@@ -372,10 +387,14 @@ def allocate_inventory(pivot_df, product_cols):
             if f"{p_col}{suffix}" in all_cols: prod_cols_ordered.append(f"{p_col}{suffix}")
 
     allocated_df['Tổng KHSX'] = allocated_df[[c for c in all_cols if 'SL sau phân bổ kho' in c]].sum(axis=1)
+    
+    # Calculate Tồn Active properly
+    ton_active = allocated_df['Remaining_Stock'].copy()
     if 'Tồn kho clc' in allocated_df.columns:
-        allocated_df['Tồn Active'] = allocated_df['Remaining_Stock'] - pd.to_numeric(allocated_df['Tồn kho clc'], errors='coerce').fillna(0)
-    if 'Tồn kho clc' in allocated_df.columns:
-        allocated_df['Tồn Active'] = allocated_df['Remaining_Stock'] - pd.to_numeric(allocated_df['Phụ kiện tồn'], errors='coerce').fillna(0)
+        ton_active -= pd.to_numeric(allocated_df['Tồn kho clc'], errors='coerce').fillna(0)
+    if 'Phụ kiện tồn' in allocated_df.columns:
+        ton_active -= pd.to_numeric(allocated_df['Phụ kiện tồn'], errors='coerce').fillna(0)
+    allocated_df['Tồn Active'] = ton_active
 
     end_cols = [c for c in ['Tổng KHSX', 'Tồn kho tốt', 'Tồn kho clc', 'Tồn NM tech', 'Tồn NM scbh', 'Tồn KHHV', 'Phụ kiện tồn', 'Tổng tồn', 'Remaining_Stock', 'Tồn Active'] if c in allocated_df.columns]
 
