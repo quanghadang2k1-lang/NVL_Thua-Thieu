@@ -171,7 +171,7 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv, f_phu_kien_ton=None)
             df_scbh.columns = ['VNPT Man P/N', 'Tồn NM scbh']
             dfs.append(df_scbh)
 
-    # 5. khhv
+    #5. KHHV
     df_khhv = load_excel_header_search(f_khhv, "TH", ["Tổng"])
     if df_khhv is None or df_khhv.empty:
         df_khhv = load_excel_header_search(f_khhv, "TH", ["mã nvl"])
@@ -246,6 +246,7 @@ def process_inventory(f_tot, f_clc, f_tech, f_scbh, f_khhv, f_phu_kien_ton=None)
         merged_inventory['Tổng tồn'] = merged_inventory[sum_cols].sum(axis=1)
         return merged_inventory
     return None
+
 
 def allocate_inventory(pivot_df, product_cols):
     def get_usages(lg_str):
