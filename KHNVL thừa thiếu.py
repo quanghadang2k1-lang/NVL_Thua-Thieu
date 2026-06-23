@@ -99,7 +99,7 @@ def process_boms(rdbom_files, manbom_files):
     is_dup = processed.duplicated(subset=[product_col, 'Level', 'VNPT MAN P/N'], keep='first')
     processed['Filter VNPT MAN P/N'] = processed['VNPT MAN P/N'].fillna("")
     processed.loc[is_dup, 'Filter VNPT MAN P/N'] = ""
-    
+
     valid = processed[processed['Filter VNPT MAN P/N'] != ""]
     counts = valid['Filter VNPT MAN P/N'].value_counts()
     processed['Popularity'] = processed['Filter VNPT MAN P/N'].map(counts)
@@ -533,13 +533,52 @@ with st.expander("2. Kế hoạch sản xuất & Nhu cầu sản lượng", expa
     if st.session_state.pivot is not None:
         pivot_df = st.session_state.pivot.copy()
         index_cols = ["Level Group", "Filter VNPT MAN P/N", "Description", "Popularity"]
-        rdbom_cols = [col for col in pivot_df.columns if col not in index_cols]
+        rdbom_cols = [col for col in pivot_df.columns if col not in index_cols and ' - Calculated' not in str(col)]
         st.session_state.product_cols = rdbom_cols
+        
+        st.markdown("Optionally upload an Excel file for KHSX multipliers (Sheet containing 'KHSX', 2 columns: 'Sản phẩm', 'Sản lượng').")
+        uploaded_khsx = st.file_uploader("Upload KHSX Excel file", type=["xlsx", "xls"], key="khsx_uploader")
+
+        multipliers_dict = {}
+        if uploaded_khsx:
+            try:
+                xls = pd.ExcelFile(uploaded_khsx)
+                matched_sheet = next((sn for sn in xls.sheet_names if 'khsx' in str(sn).lower()), xls.sheet_names[0])
+                df_khsx = pd.read_excel(uploaded_khsx, sheet_name=matched_sheet)
+
+                col_name = None
+                col_qty = None
+                for c in df_khsx.columns:
+                    if 'sản phẩm' in str(c).lower() or 'tên sản phẩm' in str(c).lower(): col_name = c
+                    if 'sản lượng' in str(c).lower(): col_qty = c
+
+                if col_name and col_qty:
+                    for _, row in df_khsx.dropna(subset=[col_name, col_qty]).iterrows():
+                        product_name = str(row[col_name]).strip()
+                        try:
+                            multipliers_dict[product_name.lower()] = float(row[col_qty])
+                        except (ValueError, TypeError):
+                            pass
+                else:
+                    for _, row in df_khsx.dropna(how='all').iterrows():
+                        if pd.notna(row.iloc[0]) and pd.notna(row.iloc[1]):
+                            product_name = str(row.iloc[0]).strip()
+                            try:
+                                multipliers_dict[product_name.lower()] = float(row.iloc[1])
+                            except (ValueError, TypeError):
+                                pass
+                st.success(f"Loaded multipliers from sheet: '{matched_sheet}'")
+            except Exception as e:
+                st.error(f"Error reading KHSX file: {e}")
+
         cols = st.columns(3)
         multipliers = {}
         for i, col in enumerate(rdbom_cols):
             with cols[i % 3]:
-                multipliers[col] = st.number_input(f"Multiplier for {col}", min_value=0.0, value=1.0, step=1.0)
+                col_lower = str(col).lower().strip()
+                default_val = multipliers_dict.get(col_lower, 1.0)
+                multipliers[col] = st.number_input(f"Multiplier for {col}", min_value=0.0, value=float(default_val), step=1.0)
+                
         if st.button("Tính nhu cầu"):
             for col in rdbom_cols:
                 pivot_df[f"{col} - Calculated"] = pivot_df[col] * multipliers[col]
@@ -547,8 +586,6 @@ with st.expander("2. Kế hoạch sản xuất & Nhu cầu sản lượng", expa
             st.success("Đã tính xong nhu cầu!")
             st.markdown("### Bảng pivot kèm sản lượng theo KHSX")
             st.dataframe(st.session_state.pivot_calculated)
-    else:
-        st.info("Hãy hoàn thành bước 1.")
 
 with st.expander("3. Upload Files Tồn bộ phận", expanded=True):
     if st.session_state.pivot_calculated is not None:
