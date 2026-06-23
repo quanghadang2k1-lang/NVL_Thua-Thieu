@@ -282,13 +282,17 @@ def allocate_inventory(pivot_df, product_cols):
         for idx, row in group_df.iterrows():
             stock = row.get(stock_col, 0)
             level_group_str = str(row.get('Level Group', ''))
-            for col in product_cols:
-                if col in level_group_str:
-                    if group_remain[col] > 0 and stock > 0:
-                        use_qty = min(group_remain[col], stock)
-                        group_df.at[idx, f"{col} - SL sau phân bổ kho"] = use_qty
-                        group_remain[col] -= use_qty
-                        stock -= use_qty
+            
+            # Prioritize products that have fewer options (rows) in this pool
+            products_in_row = [c for c in product_cols if c in level_group_str]
+            products_in_row.sort(key=lambda p: sum(1 for _, r in group_df.iterrows() if p in str(r.get('Level Group', ''))))
+
+            for col in products_in_row:
+                if group_remain[col] > 0 and stock > 0:
+                    use_qty = min(group_remain[col], stock)
+                    group_df.at[idx, f"{col} - SL sau phân bổ kho"] = use_qty
+                    group_remain[col] -= use_qty
+                    stock -= use_qty
             group_df.at[idx, 'Remaining_Stock'] = stock
 
         for col in product_cols:
@@ -302,6 +306,7 @@ def allocate_inventory(pivot_df, product_cols):
         results.append(group_df)
 
     allocated_df = pd.concat(results, ignore_index=True)
+    
 # --- Flaw Resolution Logic ---
     def resolve_pool_flaws(df_pool):
         max_iters = 20
@@ -357,7 +362,10 @@ def allocate_inventory(pivot_df, product_cols):
                         if deficit_val <= 0.0001: continue
                         valid_for_A = [idx for idx, row in df_pool.iterrows() if p_col in str(row.get('Level Group', ''))]
                         if valid_for_A:
-                            highest_pop_idx = max(valid_for_A, key=lambda i: pd.to_numeric(df_pool.loc[i, 'Popularity'], errors='coerce') if pd.notna(df_pool.loc[i, 'Popularity']) else 0)
+                            def pop_key(i):
+                                pop = pd.to_numeric(df_pool.loc[i, 'Popularity'], errors='coerce')
+                                return (pop if pd.notna(pop) else 0, i)
+                            highest_pop_idx = max(valid_for_A, key=pop_key)
                             if highest_pop_idx != deficit_idx:
                                 shift_amount = min(deficit_val, df_pool.loc[deficit_idx, alloc_col])
                                 if shift_amount > 0:
@@ -365,6 +373,10 @@ def allocate_inventory(pivot_df, product_cols):
                                     df_pool.loc[highest_pop_idx, alloc_col] += shift_amount
                                     df_pool.loc[deficit_idx, 'Remaining_Stock'] += shift_amount
                                     df_pool.loc[highest_pop_idx, 'Remaining_Stock'] -= shift_amount
+        
+        sl_cols = [f"{p} - SL sau phân bổ kho" for p in product_cols if f"{p} - SL sau phân bổ kho" in df_pool.columns]
+        df_pool['Tổng KHSX'] = df_pool[sl_cols].sum(axis=1)
+        
         return df_pool
 
     pool_temp = allocated_df['Allocation Pool'].replace('', pd.NA).ffill()
@@ -387,7 +399,7 @@ def allocate_inventory(pivot_df, product_cols):
             if f"{p_col}{suffix}" in all_cols: prod_cols_ordered.append(f"{p_col}{suffix}")
 
     allocated_df['Tổng KHSX'] = allocated_df[[c for c in all_cols if 'SL sau phân bổ kho' in c]].sum(axis=1)
-    
+
     # Calculate Tồn Active properly
     ton_active = allocated_df['Remaining_Stock'].copy()
     if 'Tồn kho clc' in allocated_df.columns:
