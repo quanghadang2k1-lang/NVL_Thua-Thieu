@@ -324,10 +324,10 @@ def allocate_inventory(pivot_df, product_cols):
         for idx, row in group_df.iterrows():
             stock = row.get(stock_col, 0)
             level_group_str = str(row.get('Level Group', ''))
-            
-            # Prioritize products that have fewer options (rows) in this pool
+
+            # Prioritize products with the smallest remaining demand first to fulfill smaller orders quickly
             products_in_row = [c for c in product_cols if c in level_group_str]
-            products_in_row.sort(key=lambda p: sum(1 for _, r in group_df.iterrows() if p in str(r.get('Level Group', ''))))
+            products_in_row.sort(key=lambda p: group_remain[p])
 
             for col in products_in_row:
                 if group_remain[col] > 0 and stock > 0:
@@ -415,10 +415,10 @@ def allocate_inventory(pivot_df, product_cols):
                                     df_pool.loc[highest_pop_idx, alloc_col] += shift_amount
                                     df_pool.loc[deficit_idx, 'Remaining_Stock'] += shift_amount
                                     df_pool.loc[highest_pop_idx, 'Remaining_Stock'] -= shift_amount
-        
+
         sl_cols = [f"{p} - SL sau phân bổ kho" for p in product_cols if f"{p} - SL sau phân bổ kho" in df_pool.columns]
         df_pool['Tổng KHSX'] = df_pool[sl_cols].sum(axis=1)
-        
+
         return df_pool
 
     pool_temp = allocated_df['Allocation Pool'].replace('', pd.NA).ffill()
@@ -589,8 +589,8 @@ with st.expander("2. Kế hoạch sản xuất & Nhu cầu sản lượng", expa
         index_cols = ["Level Group", "Filter VNPT MAN P/N", "Description", "Popularity"]
         rdbom_cols = [col for col in pivot_df.columns if col not in index_cols and ' - Calculated' not in str(col)]
         st.session_state.product_cols = rdbom_cols
-        
-        st.markdown("Optionally upload an Excel file for KHSX multipliers (Sheet containing 'KHSX', 2 columns: 'Sản phẩm', 'Sản lượng').")
+
+        st.markdown("Upload file excel chứa thông tin sản lượng cần sản xuất (Tên sheet 'KHSX', 2 columns: 'Sản phẩm', 'Sản lượng').")
         uploaded_khsx = st.file_uploader("Upload KHSX Excel file", type=["xlsx", "xls"], key="khsx_uploader")
 
         multipliers_dict = {}
@@ -632,7 +632,7 @@ with st.expander("2. Kế hoạch sản xuất & Nhu cầu sản lượng", expa
                 col_lower = str(col).lower().strip()
                 default_val = multipliers_dict.get(col_lower, 1.0)
                 multipliers[col] = st.number_input(f"Multiplier for {col}", min_value=0.0, value=float(default_val), step=1.0)
-                
+
         if st.button("Tính nhu cầu"):
             for col in rdbom_cols:
                 pivot_df[f"{col} - Calculated"] = pivot_df[col] * multipliers[col]
