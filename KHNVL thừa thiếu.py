@@ -461,6 +461,14 @@ def allocate_inventory(pivot_df, product_cols):
     return allocated_df
 
 def generate_excel(allocated_df, processed_df=None, pivot=None, merged_inventory=None, summary_df=None):
+    from openpyxl.styles import Alignment, Border, Side, PatternFill, Font
+    import io
+    import pandas as pd
+    
+    allocated_df = allocated_df.copy()
+    if 'Remaining_Stock' in allocated_df.columns:
+        allocated_df = allocated_df.rename(columns={'Remaining_Stock': 'Thừa thiếu'})
+
     # Reorder columns to group by metric instead of product
     all_cols = list(allocated_df.columns)
     fixed_start = [c for c in ['Level Group', 'Allocation Pool', 'Filter VNPT MAN P/N', 'Description', 'Popularity'] if c in all_cols]
@@ -490,6 +498,7 @@ def generate_excel(allocated_df, processed_df=None, pivot=None, merged_inventory
 
         worksheet = writer.sheets['Allocated']
         alloc_pool_col_idx = None
+        thua_thieu_col_idx = None
         max_col = worksheet.max_column
 
         std_cols = []
@@ -500,6 +509,9 @@ def generate_excel(allocated_df, processed_df=None, pivot=None, merged_inventory
             col_str = str(col_name)
             if col_str == 'Allocation Pool':
                 alloc_pool_col_idx = col_idx
+            elif col_str == 'Thừa thiếu':
+                thua_thieu_col_idx = col_idx
+            
             if ' - Standard Qty' in col_str:
                 std_cols.append(col_idx)
             elif ' - SL theo KH' in col_str:
@@ -537,6 +549,22 @@ def generate_excel(allocated_df, processed_df=None, pivot=None, merged_inventory
                 if c > 0:
                     cell = worksheet.cell(row=r, column=c)
                     cell.border = Border(left=cell.border.left, right=medium_side, top=cell.border.top, bottom=cell.border.bottom)
+
+        # --- Apply font color for negative remaining stock ---
+        if thua_thieu_col_idx:
+            red_font = Font(color="FF0000", bold=True)
+            for r in range(2, len(allocated_df) + 2):
+                thua_thieu_val = worksheet.cell(row=r, column=thua_thieu_col_idx).value
+                if isinstance(thua_thieu_val, (int, float)) and thua_thieu_val < -0.0001:
+                    for c in alloc_cols:
+                        cell = worksheet.cell(row=r, column=c)
+                        if isinstance(cell.value, (int, float)) and cell.value > 0:
+                            # Check if the allocated value is less than the requested value
+                            col_name = allocated_df.columns[c - 1]
+                            kh_col_name = col_name.replace(' - SL sau phân bổ kho', ' - SL theo KH')
+                            kh_val = allocated_df.iloc[r - 2].get(kh_col_name, 0)
+                            if abs(cell.value - kh_val) > 0.0001:
+                                cell.font = red_font
 
         if alloc_pool_col_idx:
             center_alignment = Alignment(horizontal='center', vertical='center')
