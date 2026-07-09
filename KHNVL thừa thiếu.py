@@ -89,8 +89,7 @@ def process_boms(rdbom_files, manbom_files):
         if col in merged.columns: merged = merged.rename(columns={col: 'Quantity/Product'})
     merged['consumption rate'] = pd.to_numeric(merged.get('consumption rate', 0), errors='coerce').fillna(0)
     merged['Quantity/Product'] = pd.to_numeric(merged.get('Quantity/Product', 0), errors='coerce').fillna(0)
-    merged['Standard quantity'] = merged_df['Quantity/Product'] * (1 + merged_df['consumption rate'])
-
+    merged['Standard quantity'] = merged['Quantity/Product'] * (1 + merged['consumption rate'])
 
     processed = merged.copy()
     if 'Source_MANBOM' in processed.columns:
