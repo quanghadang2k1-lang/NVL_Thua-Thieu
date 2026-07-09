@@ -89,7 +89,8 @@ def process_boms(rdbom_files, manbom_files):
         if col in merged.columns: merged = merged.rename(columns={col: 'Quantity/Product'})
     merged['consumption rate'] = pd.to_numeric(merged.get('consumption rate', 0), errors='coerce').fillna(0)
     merged['Quantity/Product'] = pd.to_numeric(merged.get('Quantity/Product', 0), errors='coerce').fillna(0)
-    merged['Standard quantity'] = merged['Quantity/Product'] + merged['consumption rate']
+    merged['Standard quantity'] = merged_df['Quantity/Product'] * (1 + merged_df['consumption rate'])
+
 
     processed = merged.copy()
     if 'Source_MANBOM' in processed.columns:
@@ -464,7 +465,7 @@ def generate_excel(allocated_df, processed_df=None, pivot=None, merged_inventory
     from openpyxl.styles import Alignment, Border, Side, PatternFill, Font
     import io
     import pandas as pd
-    
+
     allocated_df = allocated_df.copy()
     if 'Remaining_Stock' in allocated_df.columns:
         allocated_df = allocated_df.rename(columns={'Remaining_Stock': 'Thừa thiếu'})
@@ -511,7 +512,7 @@ def generate_excel(allocated_df, processed_df=None, pivot=None, merged_inventory
                 alloc_pool_col_idx = col_idx
             elif col_str == 'Thừa thiếu':
                 thua_thieu_col_idx = col_idx
-            
+
             if ' - Standard Qty' in col_str:
                 std_cols.append(col_idx)
             elif ' - SL theo KH' in col_str:
