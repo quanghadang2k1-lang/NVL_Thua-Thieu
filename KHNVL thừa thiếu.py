@@ -67,6 +67,7 @@ def load_excel_header_search(uploaded_file, sheet_keyword, keywords, is_bom=Fals
 
 def process_boms(rdbom_files, manbom_files):
     rdbom_df = pd.concat([load_excel_header_search(f, None, ['Level', 'VNPT P/N'], True, 'RDBOM') for f in rdbom_files], ignore_index=True) if rdbom_files else None
+    manbom_df = None
     manbom_df = pd.concat([load_excel_header_search(f, None, ['VNPT P/N', 'Tỉ lệ tiêu hao'], True, 'MANBOM') for f in manbom_files], ignore_index=True) if manbom_files else None
 
     if rdbom_df is None: return None, None
