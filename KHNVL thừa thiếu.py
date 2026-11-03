@@ -85,7 +85,7 @@ def process_boms(rdbom_files, manbom_files):
     merged['Source_RDBOM'] = merged['Base_Project']
     merged['Level'] = merged['Level'].astype(str).str.strip().str.replace(r'\.0$', '', regex=True)
 
-     if 'Tỉ lệ tiêu hao' in merged.columns:
+    if 'Tỉ lệ tiêu hao' in merged.columns:
         merged = merged.rename(columns={'Tỉ lệ tiêu hao': 'consumption rate'})
     if 'consumption rate' not in merged.columns:
         merged['consumption rate'] = 0.0
